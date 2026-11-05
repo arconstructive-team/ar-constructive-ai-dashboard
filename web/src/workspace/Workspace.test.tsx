@@ -76,7 +76,7 @@ describe("Workspace", () => {
     const chats = await view.findByRole("list", { name: "Chats in El Rio ADU" });
     expect(within(chats).getByRole("link", { name: /^Chat 1\b/ }).getAttribute("aria-current")).toBe("page");
     expect(view.getByRole("heading", { level: 1, name: "Chat 1" })).toBeTruthy();
-    expect(view.getByLabelText("Message").getAttribute("placeholder")).toBe("Type @ to attach a document, / for commands");
+    expect(view.getByLabelText("Message").getAttribute("placeholder")).toBe("Ask about this project…");
 
     fireEvent.click(view.getByRole("button", { name: "Chat options" }));
     fireEvent.click(view.getByRole("menuitem", { name: "Rename chat" }));
