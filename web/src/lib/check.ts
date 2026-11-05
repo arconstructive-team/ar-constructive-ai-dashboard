@@ -1,11 +1,12 @@
-import { runEngine, type EngineResult } from "./engine";
+import { runCheck, type CheckResult } from "./engine";
 import type { ProjectData } from "./project";
 
-export type CheckSet = (file: File, project: ProjectData) => Promise<EngineResult>;
+export type CheckSet = (file: File, project: ProjectData) => Promise<CheckResult>;
 
 /**
- * Checks a permit set. With VITE_API_URL set, the API reads the PDF and runs the rules.
- * Without it (the demo), the browser reads the PDF and runs the same rules locally.
+ * Checks a permit set and regenerates the cover data and notes sheets. With VITE_API_URL set,
+ * the API reads the PDF and runs the rules. Without it (the demo), the browser reads the PDF
+ * and runs the same rules locally.
  */
 export const checkPermitSet: CheckSet = async (file, project) => {
   const api = import.meta.env.VITE_API_URL as string | undefined;
@@ -24,11 +25,11 @@ export const checkPermitSet: CheckSet = async (file, project) => {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       throw new Error(body?.error ?? `The check service answered ${res.status}. Try again.`);
     }
-    return (await res.json()) as EngineResult;
+    return (await res.json()) as CheckResult;
   }
   const { extractPagesInBrowser } = await import("./pdf");
   const pages = await extractPagesInBrowser(file);
-  return runEngine(pages, {
+  return runCheck(pages, {
     jurisdiction: project.jurisdiction,
     aduType: project.aduType,
     address: project.address.trim(),
