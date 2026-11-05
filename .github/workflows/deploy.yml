@@ -125,4 +125,5 @@ jobs:
       - name: Check the service answers
         run: |
           URL=$(gcloud run services describe "$CHAT_SERVICE" --region "$REGION" --project "$PROJECT_ID" --format 'value(status.url)')
-          curl -fsS "$URL/healthz"
+          # Cloud Run answers /healthz itself (reserved path), so check /health.
+          curl -fsS --retry 3 --retry-delay 5 --retry-all-errors "$URL/health"
