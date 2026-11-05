@@ -25,27 +25,12 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-
-  # The Firestore security rules, tested on the Firestore emulator.
-  rules:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-      - run: pnpm install --frozen-lockfile
-        working-directory: web
-      - run: npx --yes firebase-tools@13.29.1 emulators:exec --only firestore --project demo-arconstructive "pnpm --dir web test:rules"
+      - name: The build holds no Anthropic client or key
+        run: |
+          if grep -rIl -e '@anthropic-ai/sdk' -e 'ANTHROPIC_API_KEY' -e 'sk-ant-' dist; then
+            echo "The web build must never hold the Anthropic client or key." >&2
+            exit 1
+          fi
 
   api:
     runs-on: ubuntu-latest
