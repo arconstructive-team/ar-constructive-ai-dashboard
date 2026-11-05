@@ -2,6 +2,7 @@
 // production (./firestore.ts), with the same documents the web app writes; tests use the
 // in-memory store below.
 import type { PageText } from "../engine/types";
+import type { SiteReport } from "../site/types";
 
 export type ArtifactKind = "issue_report" | "sheet_set" | "document";
 export type ArtifactStatus = "generating" | "ready" | "error";
@@ -61,6 +62,8 @@ export interface ChatStore {
   listMessages(projectId: string, chatId: string, limit: number): Promise<StoredMessage[]>;
   /** The permit set uploaded last in the chat, or null. */
   latestSet(projectId: string, chatId: string): Promise<StoredSet | null>;
+  /** The project's saved site report (projects/{projectId}/site/report), or null. */
+  getSiteReport(projectId: string): Promise<SiteReport | null>;
   addMessage(projectId: string, chatId: string, message: NewMessage): Promise<string>;
   updateMessage(projectId: string, chatId: string, messageId: string, patch: MessagePatch): Promise<void>;
   getArtifact(projectId: string, artifactId: string): Promise<ArtifactDoc | null>;
@@ -97,6 +100,7 @@ export class MemoryChatStore implements ChatStore {
   projects = new Map<string, ChatProject>();
   chats = new Map<string, { messages: Array<StoredMessage & { streaming?: boolean }>; sets: StoredSet[] }>();
   artifacts = new Map<string, MemoryArtifact>();
+  siteReports = new Map<string, SiteReport>();
   private next = 0;
 
   private id(prefix: string): string {
@@ -147,6 +151,10 @@ export class MemoryChatStore implements ChatStore {
   async latestSet(projectId: string, chatId: string) {
     const sets = this.chat(projectId, chatId).sets;
     return sets[sets.length - 1] ?? null;
+  }
+
+  async getSiteReport(projectId: string) {
+    return this.siteReports.get(projectId) ?? null;
   }
 
   async addMessage(projectId: string, chatId: string, message: NewMessage) {

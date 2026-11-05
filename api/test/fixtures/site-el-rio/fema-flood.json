@@ -1,0 +1,14 @@
+{
+  "displayFieldName": "DFIRM_ID",
+  "features": [
+    {
+      "attributes": {
+        "FLD_ZONE": "X",
+        "ZONE_SUBTY": "AREA OF MINIMAL FLOOD HAZARD",
+        "SFHA_TF": "F",
+        "STATIC_BFE": -9999.0,
+        "DFIRM_ID": "06013C"
+      }
+    }
+  ]
+}

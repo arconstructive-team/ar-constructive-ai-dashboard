@@ -5,6 +5,7 @@ import { AuthError, authorize, type ChatUser, type VerifyToken } from "./chat/au
 import type { ChatConfig } from "./chat/config";
 import type { ModelClient } from "./chat/model";
 import type { ChatStore } from "./chat/store";
+import { createSiteHandler, type SiteOptions } from "./site/handler";
 
 /** The largest permit set the API accepts: 200 MB. */
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -43,6 +44,8 @@ export interface AppOptions {
   allowedOrigin?: string;
   /** The team chat assistant (POST /api/chat). Without it the route answers 503. */
   chat?: ChatOptions;
+  /** The site report routes (/api/site/*). Without them they answer 503. */
+  site?: SiteOptions;
 }
 
 /** The largest chat request body: it only names the project and the chat. */
@@ -160,6 +163,7 @@ function send(res: ServerResponse, status: number, body: unknown) {
 export function createHandler(options: AppOptions = {}) {
   const max = options.maxBytes ?? MAX_UPLOAD_BYTES;
   const extract = options.extract ?? (async (data: Uint8Array) => (await import("./extract")).extractPages(data));
+  const site = createSiteHandler(options.site ?? {});
   return async (req: IncomingMessage, res: ServerResponse) => {
     const origin = corsOrigin(options.allowedOrigin, req.headers.origin);
     if (origin) res.setHeader("access-control-allow-origin", origin);
@@ -179,6 +183,7 @@ export function createHandler(options: AppOptions = {}) {
       await handleChat(req, res, options.chat);
       return;
     }
+    if (url.pathname.startsWith("/api/site/") && (await site(req, res, url))) return;
     if (url.pathname !== "/api/check") {
       send(res, 404, { error: "Not found." });
       return;

@@ -6,6 +6,7 @@ import type {
   WorkspaceArtifact,
   WorkspaceStore,
 } from "./types";
+import type { SiteReport } from "../site/types";
 
 interface VersionRecord {
   version: number;
@@ -28,6 +29,7 @@ export class MemoryStore implements WorkspaceStore {
   artifacts = new Map<string, WorkspaceArtifact>();
   versions = new Map<string, VersionRecord[]>();
   sets = new Map<string, StoredSet[]>();
+  siteReports = new Map<string, SiteReport>();
   private listeners = new Set<() => void>();
   private seq = 0;
   private clock = Date.UTC(2026, 10, 5, 16, 0, 0);
@@ -172,5 +174,15 @@ export class MemoryStore implements WorkspaceStore {
   async latestSet(_projectId: string, chatId: string) {
     const list = this.sets.get(chatId) ?? [];
     return list.length > 0 ? list[list.length - 1] : null;
+  }
+
+  watchSiteReport(projectId: string, onData: (report: SiteReport | null) => void) {
+    return this.watch(() => onData(this.siteReports.get(projectId) ?? null));
+  }
+
+  async saveSiteReport(projectId: string, report: SiteReport) {
+    // The same rule as Firestore: no undefined values.
+    this.siteReports.set(projectId, JSON.parse(JSON.stringify(report)) as SiteReport);
+    this.emit();
   }
 }

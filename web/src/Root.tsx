@@ -5,6 +5,7 @@ import { auth, db } from "./auth/firebase";
 import { useSignedInUser } from "./auth/user";
 import { CHAT_API_URL, createChatApi } from "./lib/chatApi";
 import { CODE_CYCLE } from "./lib/project";
+import { SITE_API_URL, createSiteApi } from "./site/siteApi";
 import { Assistant } from "./workspace/assistant";
 import { createFirestoreStore } from "./workspace/firestoreStore";
 import type { WorkspaceStore } from "./workspace/types";
@@ -41,6 +42,14 @@ export function Root({ store: injected }: { store?: WorkspaceStore } = {}) {
   const assistant = useMemo(() => (store ? new Assistant({ store, chat }) : null), [store, chat]);
   // The artifact canvas reads the same Firestore documents the assistant writes.
   const canvas = useMemo(() => (!injected && db ? createFirestoreSource(db) : undefined), [injected]);
+  // The site report runs on the team's API service; the Google key never reaches the browser.
+  const site = useMemo(
+    () =>
+      !injected && auth && SITE_API_URL
+        ? createSiteApi({ baseUrl: SITE_API_URL, getIdToken: async () => (await auth?.currentUser?.getIdToken()) ?? null })
+        : undefined,
+    [injected],
+  );
 
   useEffect(() => {
     const onHash = () => setRoute(routeFromHash(window.location.hash));
@@ -79,7 +88,7 @@ export function Root({ store: injected }: { store?: WorkspaceStore } = {}) {
         </div>
       </header>
       {store && assistant && user ? (
-        <Workspace store={store} assistant={assistant} user={user} canvas={canvas} />
+        <Workspace store={store} assistant={assistant} user={user} canvas={canvas} site={site} />
       ) : (
         <main className="mx-auto max-w-[680px] px-4 py-16">
           <p className="text-base text-ink">The team workspace needs sign-in. Sign in with your team account to see the projects.</p>

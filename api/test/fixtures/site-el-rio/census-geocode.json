@@ -1,0 +1,28 @@
+{
+  "result": {
+    "input": { "address": { "address": "428 El Rio Rd, Danville, CA 94526" } },
+    "addressMatches": [
+      {
+        "matchedAddress": "428 EL RIO RD, DANVILLE, CA, 94526",
+        "coordinates": { "x": -122.00450165358, "y": 37.832654253044 },
+        "addressComponents": {
+          "zip": "94526",
+          "streetName": "EL RIO",
+          "preType": "",
+          "city": "DANVILLE",
+          "preDirection": "",
+          "suffixDirection": "",
+          "fromAddress": "400",
+          "state": "CA",
+          "suffixType": "RD",
+          "toAddress": "492",
+          "suffixQualifier": "",
+          "preQualifier": ""
+        },
+        "geographies": {
+          "Counties": [{ "GEOID": "06013", "BASENAME": "Contra Costa", "NAME": "Contra Costa County", "STATE": "06", "COUNTY": "013" }]
+        }
+      }
+    ]
+  }
+}

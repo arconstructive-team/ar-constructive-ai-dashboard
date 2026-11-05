@@ -53,8 +53,9 @@ jobs:
       - name: Deploy to Firebase Hosting
         run: npx --yes firebase-tools@13.29.1 deploy --only hosting,firestore:rules --project arconstructive --non-interactive
 
-  # The API (permit check and team chat assistant) on Cloud Run. The Anthropic key goes from
-  # Secret Manager straight into the service; it is never in the repository or the web build.
+  # The API (permit check, team chat assistant and site report) on Cloud Run. The Anthropic key
+  # and the Google Maps Platform key go from Secret Manager straight into the service; they are
+  # never in the repository or the web build.
   api:
     runs-on: ubuntu-latest
     steps:
@@ -101,6 +102,15 @@ jobs:
           ENV_VARS="^;^ALLOWED_EMAILS=$ALLOWED_EMAILS;ALLOWED_ORIGIN=https://arconstructive.web.app,https://arconstructive.firebaseapp.com;GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
           # The model is a repository variable when set; else the code's default (a current Sonnet).
           if [ -n "$ANTHROPIC_MODEL" ]; then ENV_VARS="$ENV_VARS;ANTHROPIC_MODEL=$ANTHROPIC_MODEL"; fi
+          SECRETS="ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
+          # The site report's Google key (Geocoding, Street View Static, Maps Static, Solar). Until
+          # the secret exists the site report uses the free public sources and shows the Google
+          # steps as failed, so the deploy goes on without it and says so.
+          if gcloud secrets describe GOOGLE_MAPS_API_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            SECRETS="$SECRETS,GOOGLE_MAPS_API_KEY=GOOGLE_MAPS_API_KEY:latest"
+          else
+            echo "::warning::Secret GOOGLE_MAPS_API_KEY is missing: the site report has no Google geocode, images or roof data."
+          fi
           gcloud run deploy "$CHAT_SERVICE" \
             --image "${{ steps.image.outputs.image }}" \
             --region "$REGION" \
@@ -109,7 +119,7 @@ jobs:
             --allow-unauthenticated \
             --timeout 300 \
             --memory 1Gi \
-            --set-secrets ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest \
+            --set-secrets "$SECRETS" \
             --set-env-vars "$ENV_VARS" \
             --quiet
       - name: Check the service answers
