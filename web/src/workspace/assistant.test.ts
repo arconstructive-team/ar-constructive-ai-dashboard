@@ -3,6 +3,7 @@ import { ASSISTANT_NAME, Assistant, type ChatContext } from "./assistant";
 import { MemoryStore } from "./memoryStore";
 import type { ArtifactStatus } from "./types";
 import { PAGES, fakeCheck, pdfFile } from "./fixtures.test-utils";
+import { ChatApiError, type ChatApi, type ChatTarget } from "../lib/chatApi";
 
 const AHK = { uid: "u1", email: "ahk.archteam@gmail.com", name: "Ahk" };
 const RD = { uid: "u2", email: "rdghoorchian@gmail.com", name: "Reza" };
@@ -144,4 +145,101 @@ describe("Assistant", () => {
     expect(store.artifacts.size).toBe(0);
     expect((store.messages.get(chatId) ?? []).at(-1)?.role).toBe("assistant");
   });
+});
+
+describe("Assistant with Claude (the chat API)", () => {
+  /** A chat API that stands in for the server: it writes Claude's reply into the shared chat. */
+  function fakeChat(store: MemoryStore, reply: (target: ChatTarget) => Promise<string> | string) {
+    const calls: ChatTarget[] = [];
+    const chat: ChatApi = {
+      async send(target) {
+        calls.push(target);
+        const text = await reply(target);
+        const messageId = await store.addMessage(target.projectId, target.chatId, { role: "assistant", text, author: ASSISTANT_NAME });
+        return { messageId, artifactIds: [] };
+      },
+    };
+    return { chat, calls };
+  }
+
+  it("sends a free-form message to Claude instead of the help text", async () => {
+    const store = new MemoryStore();
+    const { chat, calls } = fakeChat(store, () => "For a detached ADU, check the side and rear setbacks in the city's ADU ordinance.");
+    const { assistant, ctx, chatId, projectId } = await setupWith(store, chat);
+
+    await assistant.send(ctx(), "What setbacks apply to a detached ADU?");
+
+    expect(calls).toEqual([{ projectId, chatId }]);
+    const messages = store.messages.get(chatId) ?? [];
+    expect(messages.map((m) => [m.role, m.author])).toEqual([
+      ["user", "Ahk"],
+      ["assistant", ASSISTANT_NAME],
+    ]);
+    expect(messages[1].text).toContain("setbacks");
+    expect(messages.some((m) => m.text.includes("I can do these things in this chat"))).toBe(false);
+  });
+
+  it("sends commands to Claude too, which runs the tools on the server", async () => {
+    const store = new MemoryStore();
+    const { chat, calls } = fakeChat(store, () => "I regenerated the sheets.");
+    const { assistant, ctx } = await setupWith(store, chat);
+    await assistant.send(ctx(), "regenerate the sheets");
+    expect(calls).toHaveLength(1);
+    // The browser writes no artifact: the server's tools do.
+    expect(store.artifacts.size).toBe(0);
+  });
+
+  it("says why when the server refuses the request", async () => {
+    const store = new MemoryStore();
+    const chat: ChatApi = {
+      async send() {
+        throw new ChatApiError(403, "This account is not on the team list.");
+      },
+    };
+    const { assistant, ctx, chatId } = await setupWith(store, chat);
+    await assistant.send(ctx(), "hello");
+    expect((store.messages.get(chatId) ?? []).at(-1)).toMatchObject({
+      role: "assistant",
+      text: "The assistant could not answer: This account is not on the team list.",
+    });
+  });
+
+  it("adds nothing when the server already wrote the failure into its reply", async () => {
+    const store = new MemoryStore();
+    const chat: ChatApi = {
+      async send() {
+        throw new ChatApiError(500, "The model is overloaded.");
+      },
+    };
+    const { assistant, ctx, chatId } = await setupWith(store, chat);
+    await assistant.send(ctx(), "hello");
+    expect((store.messages.get(chatId) ?? []).map((m) => m.role)).toEqual(["user"]);
+  });
+
+  it("keeps the upload in the browser and saves the set for Claude", async () => {
+    const store = new MemoryStore();
+    const { chat, calls } = fakeChat(store, () => "unused");
+    const { assistant, ctx, chatId } = await setupWith(store, chat);
+    await assistant.upload(ctx(), pdfFile());
+    expect(calls).toHaveLength(0);
+    expect(store.sets.get(chatId)?.[0].pages).toEqual(PAGES);
+    expect([...store.artifacts.values()][0]).toMatchObject({ kind: "issue_report", status: "ready" });
+  });
+
+  async function setupWith(store: MemoryStore, chat: ChatApi) {
+    const projectId = await store.createProject(
+      { name: "El Rio ADU", address: "428 El Rio Rd, Danville", jurisdiction: "City of San Ramon", aduType: "No ADU" },
+      AHK,
+    );
+    const chatId = await store.createChat(projectId, "Chat 1", AHK);
+    const assistant = new Assistant({ store, chat, extractPages: async () => PAGES, check: fakeCheck, pause: async () => undefined });
+    const ctx = (): ChatContext => ({
+      projectId,
+      chatId,
+      project: { address: "428 El Rio Rd, Danville", jurisdiction: "City of San Ramon", aduType: "No ADU" },
+      author: AHK.name,
+      messages: store.messages.get(chatId) ?? [],
+    });
+    return { assistant, ctx, chatId, projectId };
+  }
 });

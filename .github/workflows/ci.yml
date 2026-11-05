@@ -25,6 +25,12 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: The build holds no Anthropic client or key
+        run: |
+          if grep -rIl -e '@anthropic-ai/sdk' -e 'ANTHROPIC_API_KEY' -e 'sk-ant-' dist; then
+            echo "The web build must never hold the Anthropic client or key." >&2
+            exit 1
+          fi
 
   # The Firestore security rules, tested on the Firestore emulator.
   rules:

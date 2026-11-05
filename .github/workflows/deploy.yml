@@ -13,6 +13,14 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  PROJECT_ID: arconstructive
+  REGION: us-west2
+  CHAT_SERVICE: chat-api
+  # The service's own Google identity: it reads Firestore, checks Firebase sign-ins and reads
+  # the Anthropic key from Secret Manager.
+  CHAT_RUNTIME_SA: firebase-adminsdk-fbsvc@arconstructive.iam.gserviceaccount.com
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -44,3 +52,67 @@ jobs:
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Deploy to Firebase Hosting
         run: npx --yes firebase-tools@13.29.1 deploy --only hosting,firestore:rules --project arconstructive --non-interactive
+
+  # The API (permit check and team chat assistant) on Cloud Run. The Anthropic key goes from
+  # Secret Manager straight into the service; it is never in the repository or the web build.
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: api/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: api/pnpm-lock.yaml
+      - name: Install
+        working-directory: api
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        working-directory: api
+        run: |
+          pnpm typecheck
+          pnpm test
+      - name: Sign in to Google (keyless)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and push the image
+        id: image
+        run: |
+          gcloud artifacts repositories describe dashboard --location "$REGION" --project "$PROJECT_ID" >/dev/null 2>&1 \
+            || gcloud artifacts repositories create dashboard --repository-format docker --location "$REGION" --project "$PROJECT_ID"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/dashboard/$CHAT_SERVICE:${{ github.sha }}"
+          docker build -t "$IMAGE" api
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Deploy to Cloud Run
+        env:
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+        run: |
+          # One team list: the same emails the web app lets in.
+          ALLOWED_EMAILS=$(sed -n 's/^VITE_ALLOWED_EMAILS=//p' web/.env.production | tr -d '[:space:]')
+          if [ -z "$ALLOWED_EMAILS" ]; then echo "web/.env.production has no VITE_ALLOWED_EMAILS." >&2; exit 1; fi
+          ENV_VARS="^;^ALLOWED_EMAILS=$ALLOWED_EMAILS;ALLOWED_ORIGIN=https://arconstructive.web.app,https://arconstructive.firebaseapp.com;GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
+          # The model is a repository variable when set; else the code's default (a current Sonnet).
+          if [ -n "$ANTHROPIC_MODEL" ]; then ENV_VARS="$ENV_VARS;ANTHROPIC_MODEL=$ANTHROPIC_MODEL"; fi
+          gcloud run deploy "$CHAT_SERVICE" \
+            --image "${{ steps.image.outputs.image }}" \
+            --region "$REGION" \
+            --project "$PROJECT_ID" \
+            --service-account "$CHAT_RUNTIME_SA" \
+            --allow-unauthenticated \
+            --timeout 300 \
+            --memory 1Gi \
+            --set-secrets ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest \
+            --set-env-vars "$ENV_VARS" \
+            --quiet
+      - name: Check the service answers
+        run: |
+          URL=$(gcloud run services describe "$CHAT_SERVICE" --region "$REGION" --project "$PROJECT_ID" --format 'value(status.url)')
+          curl -fsS "$URL/healthz"

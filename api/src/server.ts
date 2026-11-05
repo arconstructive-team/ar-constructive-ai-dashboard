@@ -1,5 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { runCheck, type EngineOptions, type PageText } from "./engine";
+import { ChatError, runChatTurn } from "./chat/agent";
+import { AuthError, authorize, type ChatUser, type VerifyToken } from "./chat/auth";
+import type { ChatConfig } from "./chat/config";
+import type { ModelClient } from "./chat/model";
+import type { ChatStore } from "./chat/store";
 
 /** The largest permit set the API accepts: 200 MB. */
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -22,12 +27,110 @@ export function checkUpload(input: { declaredBytes?: number; head?: Uint8Array; 
   return null;
 }
 
+export interface ChatOptions {
+  verifyToken: VerifyToken;
+  config: ChatConfig;
+  store: ChatStore;
+  /** null when the server has no Anthropic key: the chat then answers 503. */
+  model: ModelClient | null;
+}
+
 export interface AppOptions {
   /** Reads the text of every page. Tests pass a fake; production uses PDF.js. */
   extract?: (data: Uint8Array) => Promise<PageText[]>;
   maxBytes?: number;
-  /** The web app's origin, for CORS. Default: any origin. */
+  /** The web app's origins, comma separated, for CORS. Default: any origin. */
   allowedOrigin?: string;
+  /** The team chat assistant (POST /api/chat). Without it the route answers 503. */
+  chat?: ChatOptions;
+}
+
+/** The largest chat request body: it only names the project and the chat. */
+const MAX_CHAT_BODY = 16 * 1024;
+const ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+function corsOrigin(allowed: string | undefined, origin: string | undefined): string | null {
+  if (!allowed || allowed.trim() === "*") return "*";
+  const list = allowed.split(",").map((o) => o.trim()).filter(Boolean);
+  if (origin && list.includes(origin)) return origin;
+  return list[0] ?? null;
+}
+
+async function drain(req: IncomingMessage) {
+  req.resume();
+}
+
+/**
+ * POST /api/chat {projectId, chatId}: Claude answers the newest messages of a team chat. The
+ * caller sends a Firebase ID token (Authorization: Bearer …) of a team member. The reply streams
+ * back as server-sent events (text, tool, done, error) and is saved to the shared chat as it grows.
+ */
+async function handleChat(req: IncomingMessage, res: ServerResponse, chat: ChatOptions | undefined) {
+  if (req.method !== "POST") {
+    send(res, 405, { error: "Use POST." });
+    return drain(req);
+  }
+  if (!chat) {
+    send(res, 503, { error: "The chat assistant is not set up on this server." });
+    return drain(req);
+  }
+  let user: ChatUser;
+  try {
+    user = await authorize(req.headers.authorization, chat.verifyToken, chat.config.allowedEmails);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      send(res, error.status, { error: error.message });
+      return drain(req);
+    }
+    throw error;
+  }
+  if (!chat.model) {
+    send(res, 503, { error: "The assistant is not set up yet: the server has no Anthropic key." });
+    return drain(req);
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder().decode(await readBody(req, MAX_CHAT_BODY)));
+  } catch (error) {
+    if (error instanceof TooLarge) res.setHeader("connection", "close");
+    send(res, 400, { error: "Send JSON: {\"projectId\": \"…\", \"chatId\": \"…\"}." });
+    return;
+  }
+  const { projectId, chatId } = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  if (typeof projectId !== "string" || !ID.test(projectId) || typeof chatId !== "string" || !ID.test(chatId)) {
+    send(res, 400, { error: "projectId and chatId are required." });
+    return;
+  }
+
+  const event = (name: string, data: unknown) => {
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        "x-accel-buffering": "no",
+      });
+    }
+    if (!res.destroyed && !res.writableEnded) res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  try {
+    const result = await runChatTurn(
+      { store: chat.store, model: chat.model, config: chat.config },
+      { projectId, chatId, user },
+      { onText: (delta) => event("text", { delta }), onTool: (name) => event("tool", { name }) },
+    );
+    event("done", { messageId: result.messageId, artifactIds: result.artifactIds });
+    res.end();
+  } catch (error) {
+    const status = error instanceof ChatError ? error.status : 500;
+    const message = error instanceof ChatError ? error.message : "The assistant could not answer. Try again.";
+    if (status === 500) console.error("chat failed", error);
+    if (!res.headersSent) {
+      send(res, status, { error: message });
+      return;
+    }
+    event("error", { error: message });
+    res.end();
+  }
 }
 
 class TooLarge extends Error {}
@@ -58,9 +161,11 @@ export function createHandler(options: AppOptions = {}) {
   const max = options.maxBytes ?? MAX_UPLOAD_BYTES;
   const extract = options.extract ?? (async (data: Uint8Array) => (await import("./extract")).extractPages(data));
   return async (req: IncomingMessage, res: ServerResponse) => {
-    res.setHeader("access-control-allow-origin", options.allowedOrigin ?? "*");
+    const origin = corsOrigin(options.allowedOrigin, req.headers.origin);
+    if (origin) res.setHeader("access-control-allow-origin", origin);
+    if (origin !== "*") res.setHeader("vary", "Origin");
     res.setHeader("access-control-allow-methods", "POST, GET, OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type");
+    res.setHeader("access-control-allow-headers", "content-type, authorization");
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "OPTIONS") {
       res.writeHead(204).end();
@@ -68,6 +173,10 @@ export function createHandler(options: AppOptions = {}) {
     }
     if (req.method === "GET" && url.pathname === "/healthz") {
       send(res, 200, { ok: true });
+      return;
+    }
+    if (url.pathname === "/api/chat") {
+      await handleChat(req, res, options.chat);
       return;
     }
     if (url.pathname !== "/api/check") {
@@ -121,14 +230,9 @@ export function createHandler(options: AppOptions = {}) {
 export function createApp(options: AppOptions = {}): Server {
   const handler = createHandler(options);
   return createServer((req, res) => {
-    handler(req, res).catch(() => send(res, 500, { error: "The check failed. Try again." }));
-  });
-}
-
-// Started directly (npm start): listen on $PORT, as Cloud Run expects.
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  const port = Number(process.env.PORT ?? 8080);
-  createApp({ allowedOrigin: process.env.ALLOWED_ORIGIN }).listen(port, () => {
-    console.log(`permit-set check API listening on port ${port}`);
+    handler(req, res).catch(() => {
+      if (res.headersSent) res.end();
+      else send(res, 500, { error: "The request failed. Try again." });
+    });
   });
 }

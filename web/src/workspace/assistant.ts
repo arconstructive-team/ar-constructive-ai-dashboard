@@ -1,6 +1,9 @@
-// The chat assistant: runs the check engine (ARCO-8) and the sheet regeneration (ARCO-10)
-// from chat messages, and writes the results as artifacts the whole team sees.
+// The chat assistant. Text messages go to Claude through the chat API (ARCO-15), which answers
+// in the shared chat and runs the check engine (ARCO-8) and the sheet regeneration (ARCO-10) as
+// tools. Uploads stay in the browser: the PDF is read and checked here, and the set is saved to
+// the chat so Claude and every team member can work on it.
 import { runCheck, type CheckResult, type PageText } from "../lib/engine";
+import { ChatApiError, type ChatApi } from "../lib/chatApi";
 import { checkSetFile, formatBytes, readHeader, type ProjectData } from "../lib/project";
 import { HELP_TEXT, applyChanges, hasChanges, readInstruction } from "./intent";
 import { issueReportMarkdown, issueReportTitle, progressiveParts, sheetSetMarkdown, sheetSetTitle } from "./report";
@@ -11,6 +14,11 @@ export const ASSISTANT_NAME = "arconstructive";
 
 export interface AssistantDeps {
   store: WorkspaceStore;
+  /**
+   * The chat API (Claude on the server). When it is set, every text message goes to it.
+   * Without it (no VITE_CHAT_API_URL, or tests), the keyword commands answer.
+   */
+  chat?: ChatApi;
   extractPages?: (file: File) => Promise<PageText[]>;
   check?: (pages: PageText[], project: ProjectData) => CheckResult;
   pause?: (ms: number) => Promise<void>;
@@ -56,6 +64,7 @@ function errorText(err: unknown, fallback: string): string {
 
 export class Assistant {
   private readonly store: WorkspaceStore;
+  private readonly chat: ChatApi | undefined;
   private readonly extractPages: (file: File) => Promise<PageText[]>;
   private readonly check: (pages: PageText[], project: ProjectData) => CheckResult;
   private readonly pause: (ms: number) => Promise<void>;
@@ -64,6 +73,7 @@ export class Assistant {
 
   constructor(deps: AssistantDeps) {
     this.store = deps.store;
+    this.chat = deps.chat;
     this.extractPages = deps.extractPages ?? extractInBrowser;
     this.check = deps.check ?? engineCheck;
     this.pause = deps.pause ?? wait;
@@ -231,11 +241,31 @@ export class Assistant {
     }
   }
 
-  /** A text message: regenerate sheets, change the project and check again, or explain what it can do. */
+  /**
+   * Asks Claude (the chat API) to answer the chat. The server streams the reply into the shared
+   * chat itself, so every team member sees it grow. A request the server refused never reached
+   * the chat, so this browser says why.
+   */
+  private async askClaude(ctx: ChatContext, chat: ChatApi): Promise<void> {
+    try {
+      await chat.send({ projectId: ctx.projectId, chatId: ctx.chatId });
+    } catch (err) {
+      // Status 500 is a failure the server already wrote into its reply message.
+      if (err instanceof ChatApiError && err.status === 500) return;
+      await this.say(ctx, `The assistant could not answer: ${errorText(err, "try again")}`);
+    }
+  }
+
+  /** A text message: Claude answers it; without the chat API, the keyword commands do. */
   async send(ctx: ChatContext, text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
     await this.store.addMessage(ctx.projectId, ctx.chatId, { role: "user", text: trimmed, author: ctx.author });
+
+    if (this.chat) {
+      await this.askClaude(ctx, this.chat);
+      return;
+    }
 
     let set: ChatSet | null;
     try {
