@@ -182,6 +182,20 @@ describe("Workspace", () => {
     expect(store.artifacts.size).toBe(1);
   });
 
+  it("shows that the assistant is working while its reply streams", async () => {
+    const store = new MemoryStore();
+    const view = browser(store, AHK);
+    await createProject(view);
+    fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
+    await view.findByRole("heading", { level: 1, name: "Chat 1" });
+    const projectId = [...store.projects.keys()][0];
+    const chatId = [...store.chats.keys()][0];
+
+    // The chat API starts its reply empty, flagged as streaming, and fills it in.
+    await act(() => store.addMessage(projectId, chatId, { role: "assistant", text: "", author: "arconstructive", streaming: true } as never));
+    expect((await view.findByRole("status")).textContent).toContain("Thinking…");
+  });
+
   it("opens the earlier artifact from its message", async () => {
     const store = new MemoryStore();
     const view = browser(store, AHK);

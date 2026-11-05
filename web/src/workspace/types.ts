@@ -72,6 +72,8 @@ export interface Message {
   createdAt: Date | null;
   artifactId?: string;
   sources?: MessageSource[];
+  /** True while the server is still writing this assistant reply. */
+  streaming?: boolean;
 }
 
 export interface NewMessage {

@@ -84,6 +84,7 @@ export function messageFromData(id: string, data: DocumentData): Message {
     createdAt: toDate(data.createdAt),
   };
   if (typeof data.artifactId === "string") message.artifactId = data.artifactId;
+  if (data.streaming === true) message.streaming = true;
   const sources = sourcesFromData(data.sources);
   if (sources.length) message.sources = sources;
   return message;
