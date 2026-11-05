@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, FileText, Loader2, Upload } from "lucide-react";
+import { AlertCircle, FileText, Loader2, Upload } from "lucide-react";
 import {
   ADU_TYPES,
   CODE_CYCLE,
@@ -14,6 +14,9 @@ import {
   type ProjectData,
   type ProjectErrors,
 } from "./lib/project";
+import { checkPermitSet, type CheckSet } from "./lib/check";
+import type { EngineResult } from "./lib/engine";
+import { Results } from "./Results";
 
 type FileState =
   | { kind: "empty" }
@@ -21,9 +24,15 @@ type FileState =
   | { kind: "ready"; file: File }
   | { kind: "error"; message: string };
 
+type CheckState =
+  | { kind: "running" }
+  | { kind: "done"; result: EngineResult }
+  | { kind: "error"; message: string };
+
 interface Submission {
   project: ProjectData;
   file: File;
+  check: CheckState;
 }
 
 const EMPTY_PROJECT: ProjectData = { address: "", jurisdiction: "", aduType: "No ADU" };
@@ -34,12 +43,30 @@ const inputBase =
   "h-11 w-full rounded-control border bg-surface px-3 text-base text-ink focus:border-accent " +
   focusRing;
 
-export function App() {
+export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {}) {
   const [project, setProject] = useState<ProjectData>(EMPTY_PROJECT);
   const [errors, setErrors] = useState<ProjectErrors>({});
   const [fileState, setFileState] = useState<FileState>({ kind: "empty" });
   const [submission, setSubmission] = useState<Submission | null>(null);
   const readId = useRef(0);
+  const checkId = useRef(0);
+
+  async function runCheck(data: ProjectData, file: File) {
+    const id = ++checkId.current;
+    setSubmission({ project: data, file, check: { kind: "running" } });
+    try {
+      const result = await checkSet(file, data);
+      if (id !== checkId.current) return;
+      setSubmission({ project: data, file, check: { kind: "done", result } });
+    } catch (err) {
+      if (id !== checkId.current) return;
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "The check failed. Try again, or check that the PDF opens in a PDF reader.";
+      setSubmission({ project: data, file, check: { kind: "error", message } });
+    }
+  }
 
   async function chooseFile(file: File | undefined) {
     if (!file) return;
@@ -72,11 +99,12 @@ export function App() {
       setFileState({ kind: "error", message: "Choose the permit set PDF first." });
     }
     if (Object.keys(found).length > 0 || fileState.kind !== "ready") return;
-    setSubmission({ project, file: fileState.file });
+    void runCheck(project, fileState.file);
   }
 
   function reset() {
     readId.current++;
+    checkId.current++;
     setProject(EMPTY_PROJECT);
     setErrors({});
     setFileState({ kind: "empty" });
@@ -105,7 +133,15 @@ export function App() {
 
         <div className="mt-12 grid gap-12 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-16">
           {submission ? (
-            <SubmissionSummary submission={submission} onReset={reset} />
+            submission.check.kind === "done" ? (
+              <Results result={submission.check.result} fileName={submission.file.name} onReset={reset} />
+            ) : (
+              <SubmissionSummary
+                submission={submission}
+                onRetry={() => void runCheck(submission.project, submission.file)}
+                onReset={reset}
+              />
+            )
           ) : (
             <form noValidate onSubmit={submit} className="grid gap-8" aria-label="Check a permit set">
               <fieldset className="grid gap-6">
@@ -314,8 +350,9 @@ function DropZoneContent({ state }: { state: FileState }) {
   );
 }
 
-function SubmissionSummary(props: { submission: Submission; onReset: () => void }) {
-  const { project, file } = props.submission;
+function SubmissionSummary(props: { submission: Submission; onRetry: () => void; onReset: () => void }) {
+  const { project, file, check } = props.submission;
+  const failed = check.kind === "error";
   const rows: Array<[string, string]> = [
     ["Project address", project.address.trim()],
     ["Jurisdiction", project.jurisdiction],
@@ -326,18 +363,30 @@ function SubmissionSummary(props: { submission: Submission; onReset: () => void 
 
   return (
     <section aria-labelledby="summary-title" className="grid content-start gap-6">
-      <div className="flex items-start gap-3 border-l-4 border-success pl-4">
-        <CheckCircle2 aria-hidden className="mt-1 size-5 shrink-0 text-success" strokeWidth={1.5} />
-        <div>
-          <h2 id="summary-title" className="font-display text-2xl font-semibold leading-[1.25]">
-            Set ready for checking
-          </h2>
-          <p className="mt-1 text-muted">
-            The file is a valid PDF and the project data is complete. The sheet-by-sheet issue report is
-            the next part we are building.
-          </p>
+      {failed ? (
+        <div role="alert" className="flex items-start gap-3 border-l-4 border-danger pl-4">
+          <AlertCircle aria-hidden className="mt-1 size-5 shrink-0 text-danger" strokeWidth={1.5} />
+          <div>
+            <h2 id="summary-title" className="font-display text-2xl font-semibold leading-[1.25]">
+              The check did not finish
+            </h2>
+            <p className="mt-1 text-muted">{check.message}</p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-start gap-3 border-l-4 border-accent pl-4" aria-live="polite">
+          <Loader2 aria-hidden className="mt-1 size-5 shrink-0 motion-safe:animate-spin" strokeWidth={1.5} />
+          <div>
+            <h2 id="summary-title" className="font-display text-2xl font-semibold leading-[1.25]">
+              Checking the set
+            </h2>
+            <p className="mt-1 text-muted">
+              We read the text of every page, sort the pages by sheet and run the rules. A 50-page set takes
+              a few seconds.
+            </p>
+          </div>
+        </div>
+      )}
 
       <dl className="divide-y divide-border border-y border-border">
         {rows.map(([term, value]) => (
