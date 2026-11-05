@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Tokens from DESIGN.md. Change DESIGN.md first, then here. */
+@theme {
+  --color-bg: #f4f4f2;
+  --color-surface: #e6e6e3;
+  --color-border: #d4d4d2;
+  --color-ink: #111111;
+  --color-muted: #6e6e6a;
+  --color-accent: #e63b2e;
+  --color-on-accent: #111111;
+  --color-accent-2: #111111;
+  --color-success: #1f7a4d;
+  --color-danger: #b42318;
+  --radius-control: 0px;
+  --radius-card: 0px;
+  --radius-sheet: 2px;
+  --radius-chip: 0px;
+  --font-display: "Schibsted Grotesk", ui-serif, system-ui, sans-serif;
+  --font-sans: "Schibsted Grotesk", system-ui, sans-serif;
+  --ease-brand: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-brand: 240ms;
+  --shadow-card: none;
+}
+
+html {
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-size: 16px;
+  line-height: 1.55;
+}
