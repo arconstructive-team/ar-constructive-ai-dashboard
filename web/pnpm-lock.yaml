@@ -54,6 +54,9 @@ importers:
         specifier: ^19.1.0
         version: 19.3.1(react@19.3.1)
     devDependencies:
+      '@firebase/rules-unit-testing':
+        specifier: ^4
+        version: 4.0.1(firebase@11.10.0)
       '@tailwindcss/vite':
         specifier: ^4.1.0
         version: 4.3.4(vite@6.4.5(@types/node@26.6.6)(jiti@2.7.0)(lightningcss@1.33.0))
@@ -551,6 +554,12 @@ packages:
     resolution: {integrity: sha512-fU0c8HY0vrVHwC+zQ/fpXSqHyDMuuuglV94VF6Yonhz8Fg2J+KOowPGANM0SZkLvVOYpTeWp3ZmM+F6NjwWLnw==}
     peerDependencies:
       '@firebase/app': 0.x
+
+  '@firebase/rules-unit-testing@4.0.1':
+    resolution: {integrity: sha512-Vu8iMLP+dO9hCAqUCitWZQdORyM6CxucilRZtleeTZd5bejZmyOiaBPwYm3NOYG6025ac99CEeA+ETmJRxa9zg==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      firebase: ^11.0.0
 
   '@firebase/storage-compat@0.3.24':
     resolution: {integrity: sha512-XHn2tLniiP7BFKJaPZ0P8YQXKiVJX+bMyE2j2YWjYfaddqiJnROJYqSomwW6L3Y+gZAga35ONXUJQju6MB6SOQ==}
@@ -2533,6 +2542,10 @@ snapshots:
       '@firebase/logger': 0.4.4
       '@firebase/util': 1.12.1
       tslib: 2.9.1
+
+  '@firebase/rules-unit-testing@4.0.1(firebase@11.10.0)':
+    dependencies:
+      firebase: 11.10.0
 
   '@firebase/storage-compat@0.3.24(@firebase/app-compat@0.4.2)(@firebase/app-types@0.9.3)(@firebase/app@0.13.2)':
     dependencies:

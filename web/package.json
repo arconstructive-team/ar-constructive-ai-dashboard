@@ -30,6 +30,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4",
     "@tailwindcss/vite": "^4.1.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.0",
