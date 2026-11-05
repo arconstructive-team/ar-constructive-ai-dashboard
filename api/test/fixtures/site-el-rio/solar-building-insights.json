@@ -1,0 +1,28 @@
+{
+  "name": "buildings/SYNTHETIC_428_EL_RIO",
+  "center": { "latitude": 37.83233, "longitude": -122.00049 },
+  "imageryDate": { "year": 2022, "month": 6, "day": 14 },
+  "imageryQuality": "HIGH",
+  "solarPotential": {
+    "maxArrayPanelsCount": 58,
+    "maxSunshineHoursPerYear": 1802.4,
+    "wholeRoofStats": { "areaMeters2": 312.5, "sunshineQuantiles": [400, 900, 1100, 1250, 1400, 1500, 1580, 1650, 1700, 1760, 1802] },
+    "roofSegmentStats": [
+      {
+        "pitchDegrees": 22.6,
+        "azimuthDegrees": 183.2,
+        "stats": { "areaMeters2": 120.3, "sunshineQuantiles": [800, 1300, 1450, 1550, 1620, 1680, 1720, 1750, 1770, 1790, 1802] }
+      },
+      {
+        "pitchDegrees": 22.1,
+        "azimuthDegrees": 3.4,
+        "stats": { "areaMeters2": 118.9, "sunshineQuantiles": [400, 700, 850, 950, 1020, 1080, 1120, 1160, 1200, 1250, 1300] }
+      },
+      {
+        "pitchDegrees": 18.4,
+        "azimuthDegrees": 92.7,
+        "stats": { "areaMeters2": 73.3, "sunshineQuantiles": [600, 1000, 1150, 1250, 1320, 1390, 1440, 1480, 1520, 1560, 1600] }
+      }
+    ]
+  }
+}

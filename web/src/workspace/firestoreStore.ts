@@ -12,6 +12,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   writeBatch,
   type DocumentData,
@@ -20,6 +21,7 @@ import {
 } from "firebase/firestore";
 import { ADU_TYPES, JURISDICTIONS, type AduType, type Jurisdiction, type ProjectData } from "../lib/project";
 import type { PageText } from "../lib/engine";
+import { isSiteReport } from "../site/types";
 import {
   ARTIFACT_KINDS,
   ARTIFACT_STATUSES,
@@ -265,6 +267,22 @@ export function createFirestoreStore(db: Firestore): WorkspaceStore {
       );
       const first = snap.docs[0];
       return first ? setFromData(first.id, first.data()) : null;
+    },
+
+    watchSiteReport(projectId, onData, onError) {
+      return onSnapshot(
+        doc(db, "projects", projectId, "site", "report"),
+        (snap) => {
+          const data: unknown = snap.exists() ? snap.data() : null;
+          onData(isSiteReport(data) ? data : null);
+        },
+        onError,
+      );
+    },
+
+    async saveSiteReport(projectId, report) {
+      // Firestore refuses undefined values; the JSON round trip drops them.
+      await setDoc(doc(db, "projects", projectId, "site", "report"), JSON.parse(JSON.stringify(report)) as DocumentData);
     },
   };
 }

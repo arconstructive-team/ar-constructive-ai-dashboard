@@ -3,6 +3,7 @@
 // assistant's replies and documents live. Admin writes skip the Firestore rules: the server
 // checks the team list itself before it gets here (./auth.ts).
 import { FieldValue, Timestamp, type DocumentData, type Firestore } from "firebase-admin/firestore";
+import type { SiteReport } from "../site/types";
 import type { ArtifactDoc, ArtifactKind, ArtifactStatus, ChatStore, StoredMessage, StoredSet } from "./store";
 
 const KINDS: ArtifactKind[] = ["issue_report", "sheet_set", "document"];
@@ -21,6 +22,13 @@ function artifactFrom(id: string, data: DocumentData): ArtifactDoc {
     version: count(data.version),
     chatId: text(data.chatId),
   };
+}
+
+/** The saved site report, when the document has the shape the web app writes. */
+export function siteReportFrom(data: DocumentData | undefined): SiteReport | null {
+  if (!data || data.version !== 1 || typeof data.address !== "string" || typeof data.generatedAt !== "string") return null;
+  if (typeof data.steps !== "object" || data.steps === null) return null;
+  return data as SiteReport;
 }
 
 export function createFirestoreChatStore(db: Firestore): ChatStore {
@@ -81,6 +89,11 @@ export function createFirestoreChatStore(db: Firestore): ChatStore {
         project: { address: text(project.address), jurisdiction: text(project.jurisdiction), aduType: text(project.aduType) },
       };
       return set;
+    },
+
+    async getSiteReport(projectId) {
+      const snap = await projectDoc(projectId).collection("site").doc("report").get();
+      return snap.exists ? siteReportFrom(snap.data()) : null;
     },
 
     async addMessage(projectId, chatId, message) {

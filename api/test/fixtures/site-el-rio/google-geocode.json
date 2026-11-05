@@ -1,0 +1,19 @@
+{
+  "status": "OK",
+  "results": [
+    {
+      "formatted_address": "428 El Rio Rd, Danville, CA 94526, USA",
+      "place_id": "SYNTHETIC_PLACE_ID_428_EL_RIO",
+      "geometry": { "location": { "lat": 37.83232, "lng": -122.00047 }, "location_type": "ROOFTOP" },
+      "address_components": [
+        { "long_name": "428", "short_name": "428", "types": ["street_number"] },
+        { "long_name": "El Rio Road", "short_name": "El Rio Rd", "types": ["route"] },
+        { "long_name": "Danville", "short_name": "Danville", "types": ["locality", "political"] },
+        { "long_name": "Contra Costa County", "short_name": "Contra Costa County", "types": ["administrative_area_level_2", "political"] },
+        { "long_name": "California", "short_name": "CA", "types": ["administrative_area_level_1", "political"] },
+        { "long_name": "United States", "short_name": "US", "types": ["country", "political"] },
+        { "long_name": "94526", "short_name": "94526", "types": ["postal_code"] }
+      ]
+    }
+  ]
+}

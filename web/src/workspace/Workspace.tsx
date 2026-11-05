@@ -15,6 +15,8 @@ import { authorName } from "../auth/user";
 import { RegeneratedSheets } from "../Regenerated";
 import { ASSISTANT_NAME, type Assistant, type ChatContext } from "./assistant";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { SitePanel, type SiteRun } from "./SitePanel";
+import type { SiteApi } from "../site/siteApi";
 import { ArtifactPane as ArtifactCanvas } from "../artifacts/ArtifactPane";
 import type { ArtifactSource } from "../artifacts/types";
 import {
@@ -70,15 +72,18 @@ export interface WorkspaceProps {
    * Without it the right pane shows a plain preview (tests with the memory store).
    */
   canvas?: ArtifactSource;
+  /** The site report service (ARCO-16). Without it the Site section shows saved reports only. */
+  site?: SiteApi;
 }
 
-export function Workspace({ store, assistant, user, canvas }: WorkspaceProps) {
+export function Workspace({ store, assistant, user, canvas, site }: WorkspaceProps) {
   const [projects, setProjects] = useState<Loadable<Project[]>>({ kind: "loading" });
   const [projectId, setProjectId] = useState<string | null>(null);
   const [chats, setChats] = useState<Loadable<Chat[]>>({ kind: "loading" });
   const [chatId, setChatId] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>("projects");
   const [creating, setCreating] = useState(false);
+  const [siteRuns, setSiteRuns] = useState<Record<string, SiteRun>>({});
 
   useEffect(
     () =>
@@ -110,6 +115,20 @@ export function Workspace({ store, assistant, user, canvas }: WorkspaceProps) {
   function openChat(id: string) {
     setChatId(id);
     setPanel("chat");
+  }
+
+  /** Runs the site report pipeline on the server and saves the answer on the project. */
+  async function refreshSite(id: string, address: string) {
+    if (!site || !address.trim()) return;
+    setSiteRuns((runs) => ({ ...runs, [id]: { kind: "running" } }));
+    try {
+      const report = await site.buildReport(address);
+      await store.saveSiteReport(id, report);
+      setSiteRuns((runs) => ({ ...runs, [id]: { kind: "idle" } }));
+    } catch (error) {
+      const message = error instanceof Error && error.message ? error.message : "Try again in a minute.";
+      setSiteRuns((runs) => ({ ...runs, [id]: { kind: "error", message } }));
+    }
   }
 
   async function newChat() {
@@ -153,6 +172,8 @@ export function Workspace({ store, assistant, user, canvas }: WorkspaceProps) {
               const id = await store.createProject(input, user);
               setCreating(false);
               openProject(id);
+              // Every new project gets its site report without anyone pressing a button.
+              void refreshSite(id, input.address);
             }}
           />
         )}
@@ -185,9 +206,24 @@ export function Workspace({ store, assistant, user, canvas }: WorkspaceProps) {
       ) : (
         <section
           aria-label="Chat"
-          className={`${panel === "projects" ? "hidden" : "flex"} flex-1 items-center justify-center p-8 lg:flex`}
+          className={`${panel === "projects" ? "hidden" : "flex"} flex-1 p-8 lg:flex ${
+            project ? "items-start justify-center overflow-y-auto" : "items-center justify-center"
+          }`}
         >
-          <EmptyMain project={project} onNewChat={() => void newChat()} onNewProject={() => setCreating(true)} />
+          {project ? (
+            <div className="grid w-full max-w-[880px] gap-8">
+              <EmptyMain project={project} onNewChat={() => void newChat()} onNewProject={() => setCreating(true)} />
+              <SitePanel
+                store={store}
+                project={project}
+                api={site}
+                run={siteRuns[project.id] ?? { kind: "idle" }}
+                onRefresh={() => void refreshSite(project.id, project.address)}
+              />
+            </div>
+          ) : (
+            <EmptyMain project={null} onNewChat={() => void newChat()} onNewProject={() => setCreating(true)} />
+          )}
         </section>
       )}
     </div>
@@ -197,9 +233,9 @@ export function Workspace({ store, assistant, user, canvas }: WorkspaceProps) {
 function EmptyMain(props: { project: Project | null; onNewChat: () => void; onNewProject: () => void }) {
   if (props.project) {
     return (
-      <div className="grid max-w-[480px] gap-4 text-center">
+      <div className="grid gap-4">
         <h1 className="font-display text-2xl font-semibold leading-[1.25]">{props.project.name}</h1>
-        <p className="text-muted">
+        <p className="max-w-[560px] text-muted">
           Open a chat from the list, or start one. In a chat you upload the permit set, and the issue report and
           regenerated sheets appear next to it for the whole team.
         </p>

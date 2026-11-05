@@ -1,0 +1,29 @@
+{
+  "displayFieldName": "APN",
+  "geometryType": "esriGeometryPolygon",
+  "spatialReference": { "wkid": 4326, "latestWkid": 4326 },
+  "features": [
+    {
+      "attributes": {
+        "APN": "200030023",
+        "parcel_dashes": "200-030-023",
+        "full_address_display": "428 EL RIO , DANVILLE",
+        "s_city": "DANVILLE",
+        "ACREAGE": 0.92,
+        "USE_CODE": 11,
+        "Description": "Single Family, 1 residence on 1 site, with or without"
+      },
+      "geometry": {
+        "rings": [
+          [
+            [-121.999982, 37.832535],
+            [-122.000611, 37.831849],
+            [-122.000976, 37.832106],
+            [-122.00033, 37.832781],
+            [-121.999982, 37.832535]
+          ]
+        ]
+      }
+    }
+  ]
+}

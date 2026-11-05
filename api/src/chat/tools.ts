@@ -2,6 +2,7 @@
 // every finding: Claude runs it and explains the result, it never makes findings up.
 import { classifyPages, runCheck } from "../engine";
 import type { EngineOptions } from "../engine/types";
+import { READ_SITE_REPORT_TOOL, runReadSiteReport } from "../site/chat";
 import type { ToolSpec } from "./model";
 import { issueReportMarkdown, issueReportTitle, progressiveParts, sheetSetMarkdown, sheetSetTitle } from "./report";
 import type { ArtifactKind, ChatProject, ChatStore, StoredSet } from "./store";
@@ -74,6 +75,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       required: ["title", "content"],
     },
   },
+  READ_SITE_REPORT_TOOL,
 ];
 
 export interface ToolContext {
@@ -267,6 +269,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         return { content: readSheet(input, ctx), isError: false };
       case "create_or_update_artifact":
         return { content: await createOrUpdate(input, ctx), isError: false };
+      case "read_site_report":
+        return runReadSiteReport(() => ctx.store.getSiteReport(ctx.projectId));
       default:
         return { content: `Unknown tool ${name}.`, isError: true };
     }

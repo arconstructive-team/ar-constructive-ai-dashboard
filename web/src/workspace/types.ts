@@ -8,9 +8,11 @@
  * - projects/{projectId}/chats/{chatId}/sets/{setId}: fileName, pages, project, createdAt
  * - projects/{projectId}/artifacts/{artifactId}: title, kind, status, content, version, chatId, updatedBy, updatedAt
  * - projects/{projectId}/artifacts/{artifactId}/versions/{version}: version, title, content, updatedBy, updatedAt, chatId
+ * - projects/{projectId}/site/report: the site report (see site/types.ts); the chat assistant reads it too
  */
 import type { PageText } from "../lib/engine";
 import type { AduType, Jurisdiction, ProjectData } from "../lib/project";
+import type { SiteReport } from "../site/types";
 
 export type Unsubscribe = () => void;
 
@@ -158,4 +160,8 @@ export interface WorkspaceStore {
   saveSet(projectId: string, chatId: string, set: NewSet): Promise<string>;
   updateSetProject(projectId: string, chatId: string, setId: string, project: ProjectData): Promise<void>;
   latestSet(projectId: string, chatId: string): Promise<StoredSet | null>;
+
+  /** The project's site report (projects/{id}/site/report), or null before the first run. */
+  watchSiteReport(projectId: string, onData: (report: SiteReport | null) => void, onError: OnError): Unsubscribe;
+  saveSiteReport(projectId: string, report: SiteReport): Promise<void>;
 }

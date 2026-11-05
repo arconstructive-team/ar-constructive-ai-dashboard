@@ -1,0 +1,5 @@
+{
+  "objectIdFieldName": "OBJECTID",
+  "geometryType": "esriGeometryPolygon",
+  "features": [{ "attributes": { "OBJECTID": 13830, "SRA": "LRA" } }]
+}
