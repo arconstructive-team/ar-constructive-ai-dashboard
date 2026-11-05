@@ -1,0 +1,64 @@
+# Managed by Autopo (autopoiesis-run v1). Agents' sandboxes have no network or installed dependencies, so the platform
+# runs what needs them here: installs, lockfiles, code generators, asset renders. One command on one branch, with a
+# read-only token and no secrets; the platform checks what changed and commits it to that branch. Don't edit: it is
+# replaced when it changes.
+name: Autopo run
+run-name: autopoiesis-run ${{ inputs.run_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to check out
+        required: true
+      command:
+        description: Shell command, run at the repository root
+        required: true
+      run_id:
+        description: The Autopo request this run answers
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: autopoiesis-run-${{ inputs.branch }}
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: 22
+      - name: Enable the repository's package manager
+        if: hashFiles('package.json') != ''
+        run: corepack enable
+      - uses: astral-sh/setup-uv@v6
+        if: hashFiles('pyproject.toml') != ''
+      - name: Run
+        env:
+          COMMAND: ${{ inputs.command }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/autopoiesis"
+          bash -o pipefail -c "$COMMAND" > "$RUNNER_TEMP/autopoiesis/output.txt" 2>&1
+          echo $? > "$RUNNER_TEMP/autopoiesis/exit_code"
+          tail -c 4000 "$RUNNER_TEMP/autopoiesis/output.txt"
+      - name: Collect what changed
+        run: |
+          out="$RUNNER_TEMP/autopoiesis"
+          git add -A -- . ':(exclude,glob)**/node_modules/**' ':(exclude,glob)**/.venv/**'
+          git diff --cached --name-only --no-renames --diff-filter=ACMRT -z > "$out/changed"
+          git diff --cached --name-only --no-renames --diff-filter=D -z > "$out/deleted"
+          tar -czf "$out/files.tgz" --null -T "$out/changed"
+          tail -c 20000 "$out/output.txt" > "$out/output_tail.txt"
+          rm "$out/output.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autopoiesis-run
+          path: ${{ runner.temp }}/autopoiesis
+          retention-days: 3
