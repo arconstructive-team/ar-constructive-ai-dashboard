@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Only the signed-in team reads and writes the workspace. Everything else is denied.
+// Tests: web/rules/firestore.rules.test.ts (run in CI on the Firestore emulator).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isTeam() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in ['ahk.archteam@gmail.com', 'rdghoorchian@gmail.com'];
+    }
+
+    // projects/{projectId} and everything under it: chats, messages, sets, artifacts, versions.
+    match /projects/{projectId} {
+      allow read, write: if isTeam();
+
+      match /{document=**} {
+        allow read, write: if isTeam();
+      }
+    }
+  }
+}

@@ -126,7 +126,7 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
 
   function go(next: View) {
     setView(next);
-    if (typeof window !== "undefined") window.location.hash = next === "library" ? "#/library" : "#/";
+    if (typeof window !== "undefined") window.location.hash = next === "library" ? "#/library" : "#/check";
   }
 
   function reset() {
@@ -144,9 +144,12 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
         <div className="mx-auto flex min-h-14 max-w-[1200px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 md:px-8">
           <span className="font-display text-lg font-semibold">arconstructive</span>
           <nav aria-label="Main" className="flex items-center gap-1">
+            <a href="#/" className={`inline-flex h-11 items-center px-3 text-sm font-medium text-muted ${focusRing}`}>
+              Projects
+            </a>
             {(
               [
-                ["check", "New check", "#/"],
+                ["check", "New check", "#/check"],
                 ["library", "Code library", "#/library"],
               ] as const
             ).map(([key, label, href]) => (
