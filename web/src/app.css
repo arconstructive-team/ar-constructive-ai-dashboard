@@ -18,6 +18,8 @@
   --radius-chip: 0px;
   --font-display: "Schibsted Grotesk", ui-serif, system-ui, sans-serif;
   --font-sans: "Schibsted Grotesk", system-ui, sans-serif;
+  --font-document: "Source Serif 4", Georgia, ui-serif, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --ease-brand: cubic-bezier(0.4, 0, 0.2, 1);
   --duration-brand: 240ms;
   --shadow-card: none;
@@ -34,4 +36,184 @@ body {
   min-height: 100vh;
   font-size: 16px;
   line-height: 1.55;
+}
+
+/* Artifact canvas: the generated document, in view and in the editor. See DESIGN.md "Artifact canvas". */
+.artifact-doc {
+  color: var(--color-ink);
+  font-size: 16px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+.artifact-doc > * + * {
+  margin-top: 1em;
+}
+.artifact-doc :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-document);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-ink);
+}
+.artifact-doc h1 {
+  font-size: 28px;
+  margin-top: 1.6em;
+}
+.artifact-doc h2 {
+  font-size: 24px;
+  margin-top: 1.6em;
+}
+.artifact-doc h3 {
+  font-size: 20px;
+  margin-top: 1.4em;
+}
+.artifact-doc :is(h4, h5, h6) {
+  font-size: 17px;
+  margin-top: 1.2em;
+}
+.artifact-doc > :first-child {
+  margin-top: 0;
+}
+.artifact-doc :is(h1, h2, h3, h4, h5, h6) + * {
+  margin-top: 0.5em;
+}
+.artifact-doc code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--color-surface);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-chip);
+}
+.artifact-doc pre {
+  background: var(--color-surface);
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.artifact-doc pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+.artifact-doc a {
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent);
+  text-underline-offset: 3px;
+}
+.artifact-doc ul {
+  list-style: disc;
+  padding-left: 1.5em;
+}
+.artifact-doc ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+}
+.artifact-doc li + li {
+  margin-top: 0.25em;
+}
+.artifact-doc li > p {
+  margin: 0;
+}
+.artifact-doc ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.artifact-doc ul[data-type="taskList"] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6em;
+}
+.artifact-doc ul[data-type="taskList"] > li > label {
+  flex: none;
+  padding-top: 0.2em;
+}
+.artifact-doc ul[data-type="taskList"] input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-ink);
+}
+.artifact-doc ul[data-type="taskList"] > li > div {
+  flex: 1;
+  min-width: 0;
+}
+.artifact-doc li[data-checked="true"] > div {
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+.artifact-doc blockquote {
+  border-left: 3px solid var(--color-border);
+  padding-left: 1em;
+  color: var(--color-muted);
+}
+.artifact-doc hr {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  margin: 2em 0;
+}
+.artifact-doc img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+}
+.artifact-doc .tableWrapper {
+  overflow-x: auto;
+  margin-top: 1.25em;
+}
+.artifact-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.45;
+  table-layout: auto;
+}
+.artifact-doc :is(th, td) {
+  border: 1px solid var(--color-border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  min-width: 80px;
+  position: relative;
+}
+.artifact-doc th {
+  background: var(--color-surface);
+  font-weight: 600;
+}
+.artifact-doc :is(th, td) > p {
+  margin: 0;
+}
+.artifact-doc .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  pointer-events: none;
+}
+.artifact-doc.ProseMirror {
+  outline: none;
+}
+.artifact-doc.ProseMirror[contenteditable="false"] {
+  opacity: 0.7;
+}
+.artifact-doc .ProseMirror-selectednode {
+  outline: 2px solid var(--color-accent);
+}
+.artifact-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.1em;
+  margin-top: 0.5em;
+  background: var(--color-accent);
+  vertical-align: text-bottom;
+  animation: artifact-caret-blink 1s steps(1) infinite;
+}
+@keyframes artifact-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-caret {
+    animation: none;
+  }
 }
