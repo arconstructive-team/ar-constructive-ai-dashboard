@@ -22,6 +22,7 @@ import { ASSISTANT_NAME, type Assistant, type ChatContext } from "./assistant";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { SitePanel, type SiteRun } from "./SitePanel";
 import { DocumentsPage } from "./DocumentsPage";
+import { chatActivity, chatTimeLabel, chatTimeTitle, groupChatsByDate } from "./chatGroups";
 import type { SiteApi } from "../site/siteApi";
 import { ArtifactPane as ArtifactCanvas } from "../artifacts/ArtifactPane";
 import { hashRouter, routeHref, type Router, type WorkspaceRoute } from "./router";
@@ -126,6 +127,21 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
     );
   }, [store, projectId]);
 
+  const [artifactCounts, setArtifactCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setArtifactCounts({});
+    if (!projectId) return;
+    return store.watchProjectArtifacts(
+      projectId,
+      (artifacts) => {
+        const counts: Record<string, number> = {};
+        for (const a of artifacts) counts[a.chatId] = (counts[a.chatId] ?? 0) + 1;
+        setArtifactCounts(counts);
+      },
+      () => setArtifactCounts({}),
+    );
+  }, [store, projectId]);
+
   const project = projects.kind === "ready" ? (projects.data.find((p) => p.id === projectId) ?? null) : null;
   const chat = chats.kind === "ready" ? (chats.data.find((c) => c.id === chatId) ?? null) : null;
 
@@ -205,6 +221,7 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
             documentsOpen={route.page === "documents" && !chatId}
             onNewChat={() => void newChat()}
             onNewProject={() => setCreating(true)}
+            artifactCounts={artifactCounts}
           />
         </div>
       </aside>
@@ -483,6 +500,7 @@ function ProjectList(props: {
   documentsOpen: boolean;
   onNewChat: () => void;
   onNewProject: () => void;
+  artifactCounts: Record<string, number>;
 }) {
   const { projects } = props;
   if (projects.kind === "loading") {
@@ -540,30 +558,102 @@ function ProjectList(props: {
                 {props.chats.kind === "loading" && <p className="py-2 text-sm text-muted">Loading chats…</p>}
                 {props.chats.kind === "error" && <ErrorLine message={props.chats.message} />}
                 {props.chats.kind === "ready" && (
-                  <ul aria-label={`Chats in ${p.name}`} className="grid">
-                    {props.chats.data.length === 0 && <li className="py-2 text-sm text-muted">No chats yet.</li>}
-                    {props.chats.data.map((c) => (
-                      <li key={c.id}>
-                        <a
-                          href={routeHref({ projectId: p.id, chatId: c.id })}
-                          aria-current={c.id === props.chatId ? "page" : undefined}
-                          onClick={(e) => followLink(e, () => props.onChat(c.id))}
-                          className={`flex min-h-11 w-full items-center gap-2 border-l-2 px-2 text-left text-sm hover:bg-surface ${
-                            c.id === props.chatId ? "border-accent font-semibold text-ink" : "border-transparent text-muted"
-                          } ${focusRing}`}
-                        >
-                          <MessageSquare aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />
-                          <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
+                  <ChatList
+                    projectId={p.id}
+                    projectName={p.name}
+                    chats={props.chats.data}
+                    chatId={props.chatId}
+                    artifactCounts={props.artifactCounts}
+                    onChat={props.onChat}
+                  />
                 )}
                 <button type="button" className={ghostButton} onClick={props.onNewChat}>
                   <Plus aria-hidden className="size-4" strokeWidth={1.5} />
                   New chat
                 </button>
               </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function ChatList(props: {
+  projectId: string;
+  projectName: string;
+  chats: Chat[];
+  chatId: string | null;
+  artifactCounts: Record<string, number>;
+  onChat: (id: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const now = new Date();
+  const groups = groupChatsByDate(props.chats, now);
+  if (groups.length === 0) return <p className="py-2 text-sm text-muted">No chats yet.</p>;
+  return (
+    <ul aria-label={`Chats in ${props.projectName}`} className="grid gap-1 pt-1">
+      {groups.map((g) => {
+        const closed = !!collapsed[g.key];
+        const listId = `chats-${props.projectId}-${g.key}`;
+        return (
+          <li key={g.key} aria-label={g.label}>
+            <button
+              type="button"
+              aria-expanded={!closed}
+              aria-controls={listId}
+              onClick={() => setCollapsed((c) => ({ ...c, [g.key]: !closed }))}
+              className={`flex min-h-8 w-full items-center gap-1 px-2 text-left text-xs font-medium text-muted hover:text-ink ${focusRing}`}
+            >
+              <span>{g.label}</span>
+              <ChevronDown
+                aria-hidden
+                className={`size-3.5 shrink-0 motion-safe:transition-transform ${closed ? "-rotate-90" : ""}`}
+                strokeWidth={1.5}
+              />
+              <span className="ml-auto tabular-nums">{g.chats.length}</span>
+            </button>
+            {!closed && (
+              <ul id={listId} className="grid">
+                {g.chats.map((c) => {
+                  const at = chatActivity(c, now);
+                  const artifacts = props.artifactCounts[c.id] ?? 0;
+                  const current = c.id === props.chatId;
+                  return (
+                    <li key={c.id}>
+                      <a
+                        href={routeHref({ projectId: props.projectId, chatId: c.id })}
+                        aria-current={current ? "page" : undefined}
+                        onClick={(e) => followLink(e, () => props.onChat(c.id))}
+                        className={`flex min-h-11 w-full items-center gap-2 border-l-2 px-2 text-left text-sm hover:bg-surface ${
+                          current ? "border-accent font-semibold text-ink" : "border-transparent text-muted"
+                        } ${focusRing}`}
+                      >
+                        <MessageSquare aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />
+                        <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                        {artifacts > 0 && (
+                          <span
+                            className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-muted tabular-nums"
+                            title={`${artifacts} ${artifacts === 1 ? "artifact" : "artifacts"}`}
+                          >
+                            <FileText aria-hidden className="size-3.5" strokeWidth={1.5} />
+                            {artifacts}
+                            <span className="sr-only">{artifacts === 1 ? " artifact" : " artifacts"}</span>
+                          </span>
+                        )}
+                        <time
+                          dateTime={at.toISOString()}
+                          title={chatTimeTitle(at)}
+                          className="shrink-0 text-xs font-normal text-muted tabular-nums"
+                        >
+                          {chatTimeLabel(at, now)}
+                        </time>
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </li>
         );

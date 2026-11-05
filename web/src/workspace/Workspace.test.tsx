@@ -74,7 +74,7 @@ describe("Workspace", () => {
 
     fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
     const chats = await view.findByRole("list", { name: "Chats in El Rio ADU" });
-    expect(within(chats).getByRole("link", { name: "Chat 1" }).getAttribute("aria-current")).toBe("page");
+    expect(within(chats).getByRole("link", { name: /^Chat 1\b/ }).getAttribute("aria-current")).toBe("page");
     expect(view.getByRole("heading", { level: 1, name: "Chat 1" })).toBeTruthy();
     expect(view.getByLabelText("Message").getAttribute("placeholder")).toBe("Type @ to attach a document, / for commands");
 
@@ -83,7 +83,7 @@ describe("Workspace", () => {
     fireEvent.change(view.getByLabelText("Chat name"), { target: { value: "Plan check, round 1" } });
     fireEvent.click(view.getByRole("button", { name: "Save name" }));
     expect(await view.findByRole("heading", { level: 1, name: "Plan check, round 1" })).toBeTruthy();
-    expect(within(chats).getByRole("link", { name: "Plan check, round 1" })).toBeTruthy();
+    expect(within(chats).getByRole("link", { name: /^Plan check, round 1/ })).toBeTruthy();
     expect([...store.chats.values()][0].title).toBe("Plan check, round 1");
   });
 
@@ -161,7 +161,7 @@ describe("Workspace", () => {
 
     fireEvent.click(ahk.getAllByRole("button", { name: "New chat" })[0]);
     await ahk.findByRole("heading", { level: 1, name: "Chat 1" });
-    fireEvent.click(within(await reza.findByRole("list", { name: "Chats in El Rio ADU" })).getByRole("link", { name: "Chat 1" }));
+    fireEvent.click(within(await reza.findByRole("list", { name: "Chats in El Rio ADU" })).getByRole("link", { name: /^Chat 1\b/ }));
     await reza.findByRole("heading", { level: 1, name: "Chat 1" });
 
     // Ahk uploads the set. Reza sees the messages and the issue report.
