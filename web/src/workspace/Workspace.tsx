@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -1216,6 +1216,8 @@ interface SourceOption extends MessageSource {
   detail: string;
 }
 
+const COMPOSER_MAX_HEIGHT = 200;
+
 function Composer(props: {
   busy: boolean;
   sources: SourceOption[];
@@ -1234,6 +1236,16 @@ function Composer(props: {
   const inputId = useId();
   const listId = useId();
   const showCommands = text.startsWith("/");
+
+  // Grow with the text up to a cap, then scroll; no scrollbar on a single line.
+  useLayoutEffect(() => {
+    const el = textarea.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const full = el.scrollHeight;
+    el.style.height = `${Math.min(full, COMPOSER_MAX_HEIGHT)}px`;
+    el.style.overflowY = full > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+  }, [text]);
 
   // "@" followed by what the person typed so far, right before the caret: a mention being written.
   const mention = useMemo(() => {
@@ -1273,9 +1285,12 @@ function Composer(props: {
     setText("");
     setAttached([]);
     setPicking(false);
+    textarea.current?.focus();
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter while an input method is composing (Japanese, Chinese, ...) confirms the word, not the message.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (mention && mention.matches.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -1416,14 +1431,23 @@ function Composer(props: {
           ))}
         </ul>
       )}
-      <div className="flex items-end gap-2 border border-border bg-surface p-1 focus-within:border-accent">
+      <div
+        onMouseDown={(e) => {
+          // Clicking the padding around the field still puts the caret in it.
+          if (e.target === e.currentTarget) {
+            e.preventDefault();
+            textarea.current?.focus();
+          }
+        }}
+        className="flex cursor-text items-end gap-1 border border-border bg-surface p-1 transition-colors duration-(--duration-brand) ease-(--ease-brand) focus-within:border-ink"
+      >
         <button
           type="button"
           aria-label="Attach project documents"
           aria-expanded={picking}
           title="Sources: attach project documents"
           onClick={() => setPicking((v) => !v)}
-          className={`inline-flex size-11 shrink-0 items-center justify-center rounded-control ${picking || attached.length ? "text-accent" : ""} ${focusRing}`}
+          className={`inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control hover:bg-border/70 hover:text-ink ${picking || attached.length ? "text-accent" : "text-muted"} ${focusRing}`}
         >
           <Library aria-hidden className="size-5" strokeWidth={1.5} />
         </button>
@@ -1432,7 +1456,8 @@ function Composer(props: {
           aria-label="Upload a permit set PDF"
           disabled={props.busy}
           onClick={() => fileInput.current?.click()}
-          className={`inline-flex size-11 shrink-0 items-center justify-center rounded-control disabled:opacity-40 ${focusRing}`}
+          title="Upload a permit set PDF"
+          className={`inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-border/70 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${focusRing}`}
         >
           <Paperclip aria-hidden className="size-5" strokeWidth={1.5} />
         </button>
@@ -1470,14 +1495,16 @@ function Composer(props: {
           aria-controls={mention ? listId : undefined}
           aria-autocomplete="list"
           aria-activedescendant={mention && mention.matches.length > 0 ? `${listId}-${active}` : undefined}
-          placeholder="Type @ to attach a document, / for commands"
-          className="max-h-40 min-h-11 flex-1 resize-none bg-transparent px-2 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none"
+          aria-describedby={`${inputId}-hint`}
+          placeholder="Ask about this project…"
+          className="block min-h-11 min-w-0 flex-1 resize-none overflow-hidden bg-transparent px-2 py-2.5 text-base leading-6 text-ink [scrollbar-width:thin] placeholder:truncate placeholder:text-muted focus:outline-none"
         />
         <button
           type="submit"
-          aria-label="Send"
+          aria-label={props.busy ? "Sending" : "Send"}
+          title="Send (Enter)"
           disabled={props.busy || !text.trim()}
-          className={`inline-flex size-11 shrink-0 items-center justify-center rounded-control bg-accent text-on-accent transition-[filter] duration-(--duration-brand) ease-(--ease-brand) hover:brightness-[0.92] disabled:opacity-40 ${focusRing}`}
+          className={`inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control bg-accent text-on-accent transition-[filter,background-color,color] duration-(--duration-brand) ease-(--ease-brand) hover:brightness-[0.92] disabled:cursor-not-allowed disabled:bg-border disabled:text-muted disabled:hover:brightness-100 ${focusRing}`}
         >
           {props.busy ? (
             <Loader2 aria-hidden className="size-5 motion-safe:animate-spin" strokeWidth={1.5} />
@@ -1486,6 +1513,10 @@ function Composer(props: {
           )}
         </button>
       </div>
+      <p id={`${inputId}-hint`} className="mt-1.5 truncate px-1 text-xs text-muted">
+        <kbd className="font-sans font-medium text-ink">Enter</kbd> send · <kbd className="font-sans font-medium text-ink">Shift+Enter</kbd> new
+        line · <kbd className="font-sans font-medium text-ink">@</kbd> attach · <kbd className="font-sans font-medium text-ink">/</kbd> commands
+      </p>
     </form>
   );
 }
