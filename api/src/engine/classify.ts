@@ -72,26 +72,28 @@ export function readTitleBlock(text: string): TitleBlock | null {
   return null;
 }
 
-/** Reads the sheet index printed on the cover: the sheet numbers listed under "SHEET INDEX". */
+/**
+ * Reads the sheet index printed on the cover. The PDF text puts the index as columns: a run
+ * of titles, then a run of sheet numbers. Every run of five or more lines that each start
+ * with a sheet number is an index column; the columns are joined in page order.
+ */
 export function parseSheetIndex(text: string): string[] {
-  const lines = text.split("\n").map((l) => l.trim());
-  const entry = new RegExp(`^(${SHEET_ID})(?![\\w.])`);
-  for (let i = 0; i < lines.length; i++) {
-    if (!/^SHEET INDEX\b/i.test(lines[i])) continue;
-    const entries: string[] = [];
-    let misses = 0;
-    for (let k = i + 1; k < lines.length && misses < 3; k++) {
-      const m = entry.exec(lines[k]);
-      if (m) {
-        entries.push(m[1].toUpperCase());
-        misses = 0;
-      } else if (lines[k] !== "") {
-        misses++;
-      }
-    }
-    if (entries.length >= 3) return entries;
+  const entry = new RegExp(`^(${SHEET_ID})(?![\\w.-])`);
+  const entries: string[] = [];
+  let run: string[] = [];
+  const close = () => {
+    if (run.length >= 5) entries.push(...run);
+    run = [];
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    const m = entry.exec(line);
+    if (m) run.push(m[1].toUpperCase());
+    else close();
   }
-  return [];
+  close();
+  return entries;
 }
 
 function kindOf(sheet: string, method: ClassifyMethod, text: string): PageKind {

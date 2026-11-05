@@ -126,7 +126,7 @@ export function contradictionRules(ctx: RuleContext): Finding[] {
           severity: "high",
           title: `Notes describe more floors${elevator ? " and an elevator" : ""} than the ${ctx.stories}-story building`,
           subject: "number of floors",
-          pages: [...(ctx.cover ? [ctx.cover] : []), ...hits.map((h) => h.p)],
+          pages: hits.map((h) => h.p),
           evidence: `The cover states ${ctx.stories} stories. ${listSheets(hits.map((h) => h.p.label))}: ${snippet(hits[0].p.text, hits[0].index, hits[0].text.length, 80)}`,
           suggested_fix: elevator
             ? "Delete the elevator shaft note, or show the elevator on the plans, and describe the real number of floors."
@@ -207,17 +207,28 @@ export function coverAreas(text: string): {
   adu: AreaLine | null;
   total: AreaLine | null;
 } {
-  const pick = (label: string, re: RegExp): AreaLine | null => {
-    const m = findFirst(text, re);
+  const pick = (source: string, label: string, re: RegExp): AreaLine | null => {
+    const m = findFirst(source, re);
     return m ? { label, value: toNumber(m.groups[0]), text: collapse(m.text) } : null;
   };
-  const first = pick("1st floor", /\b1ST\s+FLOOR\s*:\s*([\d,]+)/i);
-  const second = pick("2nd floor", /\b2ND\s+FLOOR\s*:\s*([\d,]+)/i);
-  const garage = pick("garage", /(?<!\(E\)\s*)\(GARAGE\)\s*:\s*([\d,]+)/i);
-  const existingGarage = pick("existing garage", /\(E\)\s*\(?GARAGE\)?\s*:\s*([\d,]+)/i);
-  const adu = pick("ADU", /\bJ?ADU(?:\s*\((?:ATTACHED|DETACHED)\))?\s*:\s*([\d,]+)/i);
-  const total = pick("total floor area", /\bTOTAL\s+FLOOR\s+AREA[^\d\n]*([\d,]+)/i);
-  const lines = [first, second, garage, existingGarage, adu, total].filter((l): l is AreaLine => l !== null);
+  // The cover has an "(E) GROSS FLOOR AREA" block and an "(N) GROSS FLOOR AREA" block,
+  // each ending with a total. The new (N) block is the one the plans must match.
+  const blocks = new Map<string, string>();
+  for (const m of findAll(text, /\((E|N)\)\s*GROSS\s+FLOOR\s+AREA\s*:?([\s\S]*?TOTAL\s+FLOOR\s+AREA[^\n]*)/i)) {
+    const key = m.groups[0].toUpperCase();
+    if (!blocks.has(key)) blocks.set(key, m.groups[1]);
+  }
+  const proposed = blocks.get("N") ?? text;
+  const existing = blocks.get("E");
+  const first = pick(proposed, "1st floor", /\b1ST\s+FLOOR\s*:\s*([\d,]+)/i);
+  const second = pick(proposed, "2nd floor", /\b2ND\s+FLOOR\s*:\s*([\d,]+)/i);
+  const garage = pick(proposed, "garage", /\(GARAGE\)\s*:\s*([\d,]+)/i);
+  const total = pick(proposed, "total floor area", /\bTOTAL\s+FLOOR\s+AREA[^\d\n]*([\d,]+)/i);
+  const existingGarage = existing
+    ? pick(existing, "existing garage", /\(GARAGE\)\s*:\s*([\d,]+)/i)
+    : pick(text, "existing garage", /\(E\)\s*\(?GARAGE\)?\s*:\s*([\d,]+)/i);
+  const adu = pick(text, "ADU", /\bJ?ADU(?:\s*\((?:ATTACHED|DETACHED)\))?\s*:\s*([\d,]+)/i);
+  const lines = [first, second, garage, total, adu, existingGarage].filter((l): l is AreaLine => l !== null);
   return { lines, first, second, garage, existingGarage, adu, total };
 }
 
@@ -355,26 +366,36 @@ export function crossReferenceRules(ctx: RuleContext): RuleOutput {
     missing.push({ item: sheet, reason: "Cited in a note", cited_on: labels });
   }
 
-  // XR-003: "SEE RENDER A-0.2" where A-0.2 has no render.
+  // XR-003: "SEE RENDER A-0.2" where A-0.2 has no render. One finding per target and kind.
+  const wrong = new Map<string, { kind: string; target: ClassifiedPage; refs: Array<{ p: ClassifiedPage; text: string }> }>();
   for (const page of ctx.pages) {
     for (const m of findAll(page.text, SEE_KIND)) {
       const kind = m.groups[0].toUpperCase().replace(/ING$/, "");
       const target = bySheet.get(m.groups[1].toUpperCase());
       const word = new RegExp(`\\b${kind}(?:ING)?S?\\b`, "i");
       if (!target || target === page || word.test(target.text)) continue;
-      const holder = ctx.pages.find((p) => p !== page && p !== target && word.test(p.text));
-      findings.push(
-        makeFinding({
-          rule_id: "XR-003",
-          severity: "medium",
-          title: `Reference to a ${kind.toLowerCase()} on ${target.label} points to the wrong sheet`,
-          subject: `${kind.toLowerCase()} ${target.label}`,
-          pages: [page, target, ...(holder ? [holder] : [])],
-          evidence: `${page.label}: "${collapse(m.text)}". ${target.label} has no ${kind.toLowerCase()}${holder ? `; it is on ${holder.label}` : ""}.`,
-          suggested_fix: `Point the note to ${holder ? holder.label : "the sheet that has it"}.`,
-        }),
-      );
+      const key = `${kind} ${target.sheet}`;
+      const entry = wrong.get(key) ?? { kind, target, refs: [] };
+      entry.refs.push({ p: page, text: m.text });
+      wrong.set(key, entry);
     }
+  }
+  for (const { kind, target, refs } of wrong.values()) {
+    const word = new RegExp(`\\b${kind}(?:ING)?S?\\b`, "i");
+    const referring = new Set(refs.map((r) => r.p));
+    const holder = ctx.pages.find((p) => !referring.has(p) && p !== target && word.test(p.text));
+    const labels = unique(refs.map((r) => r.p.label));
+    findings.push(
+      makeFinding({
+        rule_id: "XR-003",
+        severity: "medium",
+        title: `Notes point to a ${kind.toLowerCase()} on ${target.label}, which has none`,
+        subject: `${kind.toLowerCase()} ${target.label}`,
+        pages: [target, ...referring, ...(holder ? [holder] : [])],
+        evidence: `${listSheets(labels)}: "${collapse(refs[0].text)}". ${target.label} has no ${kind.toLowerCase()}${holder ? `; it is on ${holder.label}` : ""}.`,
+        suggested_fix: `Point the notes to ${holder ? holder.label : "the sheet that has it"}.`,
+      }),
+    );
   }
 
   // XR-004: structural sheets that name a level the building does not have.
@@ -402,7 +423,8 @@ export function crossReferenceRules(ctx: RuleContext): RuleOutput {
 
 const STREET =
   /\b(\d{2,6})\s+((?:[A-Za-z]+\s+){0,3}?)(ROAD|RD|STREET|ST|AVENUE|AVE|DRIVE|DR|LANE|LN|COURT|CT|WAY|BOULEVARD|BLVD|PLACE|PL|CIRCLE|CIR)\b\.?,?[ \t]*\n?[ \t]*([A-Za-z][A-Za-z ]*?)?(?=[ ,]*(?:CA|CALIFORNIA)\b|\n|$)/gi;
-const CONTACT = /@|\(?\b\d{3}\)?[-. ]\d{3}[-.]\d{4}\b|ENGINEERS?\b|HERS\s+RATER|LICENSE|LIC\.|\bEXP:/i;
+// Consultant contact data near an address: the address is the consultant's, not a project's.
+const CONTACT = /@|\(?\b\d{3}\)?[-. ]\d{3}[-.]\d{4}\b|ENGINEERS?\b|HERS\s+RATER|LICENSE|LIC\./i;
 const TRUST = /\b([A-Z]+(?:\s+[A-Z]+){0,3})\s+(?:LIVING|FAMILY|REVOCABLE)\s+TRUST\b/g;
 const LEFTOVER_BLOCK = /SHEET NO\.[ \t]*\n\s*(\d{1,2}\/\d{1,2}\/\d{4})\s*\n/g;
 
@@ -417,7 +439,7 @@ export function titleBlockRules(ctx: RuleContext): Finding[] {
   for (const page of designPages(ctx)) {
     for (const m of findAll(page.text, STREET)) {
       if (ctx.projectNumber && m.groups[0] === ctx.projectNumber) continue;
-      const around = page.text.slice(Math.max(0, m.index - 40), m.index + m.text.length + 40);
+      const around = page.text.slice(Math.max(0, m.index - 60), m.index + m.text.length + 60);
       if (CONTACT.test(around)) continue;
       add(`address "${collapse(m.text).replace(/,$/, "")}"`, page);
     }

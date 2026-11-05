@@ -17,6 +17,7 @@ export * from "./types";
 export { classifyPages, parseSheetIndex, readTitleBlock } from "./classify";
 export { DANVILLE_2025, getPack } from "./packs";
 export { itemsToText } from "./text";
+export { coverAreas } from "./rules";
 
 export const RULE_FAMILY_ORDER: RuleFamily[] = ["JB", "CD", "CY", "AR", "XR", "TB", "DT", "TP"];
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 } as const;
@@ -77,7 +78,16 @@ export function runEngine(input: PageText[], options: EngineOptions = {}): Engin
     pack: ctx.pack.id,
     pack_name: ctx.pack.name,
     code_cycle: ctx.pack.codeCycle,
-    pages: ctx.pages.map(({ text: _text, ...summary }) => summary),
+    pages: ctx.pages.map((p) => ({
+      page: p.page,
+      sheet: p.sheet,
+      label: p.label,
+      kind: p.kind,
+      title: p.title,
+      date: p.date,
+      address: p.address,
+      method: p.method,
+    })),
     sheet_index: ctx.index,
     findings,
     missing: [...xr.missing, ...tp.missing],
