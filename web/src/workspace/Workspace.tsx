@@ -188,23 +188,11 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
       >
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
           <h2 className="font-display text-lg font-semibold">Projects</h2>
-          <button type="button" className={secondaryButton} onClick={() => setCreating((v) => !v)} aria-expanded={creating}>
+          <button type="button" className={secondaryButton} onClick={() => setCreating(true)} aria-haspopup="dialog">
             <Plus aria-hidden className="size-4" strokeWidth={1.5} />
             New project
           </button>
         </div>
-        {creating && (
-          <NewProjectForm
-            onCancel={() => setCreating(false)}
-            onCreate={async (input) => {
-              const id = await store.createProject(input, user);
-              setCreating(false);
-              openProject(id);
-              // Every new project gets its site report without anyone pressing a button.
-              void refreshSite(id, input.address);
-            }}
-          />
-        )}
         <div className="flex-1 overflow-y-auto px-2 py-2">
           <ProjectList
             projects={projects}
@@ -286,6 +274,18 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
             <EmptyMain project={null} onNewChat={() => void newChat()} onNewProject={() => setCreating(true)} />
           )}
         </section>
+      )}
+      {creating && (
+        <NewProjectDialog
+          onCancel={() => setCreating(false)}
+          onCreate={async (input) => {
+            const id = await store.createProject(input, user);
+            setCreating(false);
+            openProject(id);
+            // Every new project gets its site report without anyone pressing a button.
+            void refreshSite(id, input.address);
+          }}
+        />
       )}
     </div>
   );
@@ -572,16 +572,67 @@ function ProjectList(props: {
   );
 }
 
-function NewProjectForm(props: {
+/**
+ * Starting a project is the first thing anyone does here, so it gets a centered dialog of its own
+ * instead of a cramped form in the sidebar. Escape, the close button, Cancel and a click on the
+ * backdrop all close it; focus moves in when it opens, stays inside while it is open, and goes
+ * back to whatever opened it when it closes.
+ */
+function NewProjectDialog(props: {
   onCreate: (input: { name: string; address: string; jurisdiction: Jurisdiction; aduType: AduType }) => Promise<void>;
   onCancel: () => void;
 }) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const nameId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [jurisdiction, setJurisdiction] = useState<Jurisdiction | "">("");
   const [aduType, setAduType] = useState<AduType>("No ADU");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  const cancelRef = useRef(props.onCancel);
+  cancelRef.current = props.onCancel;
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const { overflow } = document.body.style;
+    document.body.style.overflow = "hidden";
+    panelRef.current?.querySelector<HTMLElement>("input, select")?.focus();
+    return () => {
+      document.body.style.overflow = overflow;
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+
+  function close() {
+    if (!busyRef.current) cancelRef.current();
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      close();
+      return;
+    }
+    if (event.key !== "Tab" || !panelRef.current) return;
+    const focusable = [
+      ...panelRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled])"),
+    ];
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -593,53 +644,107 @@ function NewProjectForm(props: {
       await props.onCreate({ name: name.trim() || address.trim(), address: address.trim(), jurisdiction, aduType });
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : "The project could not be saved. Try again.");
-    } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form aria-label="New project" noValidate onSubmit={submit} className="grid gap-3 border-b border-border p-4">
-      <label className="grid gap-1 text-sm font-medium">
-        Project name
-        <input className={inputBase} value={name} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <label className="grid gap-1 text-sm font-medium">
-        Project address
-        <input className={inputBase} value={address} autoComplete="street-address" onChange={(e) => setAddress(e.target.value)} />
-      </label>
-      <label className="grid gap-1 text-sm font-medium">
-        Jurisdiction
-        <select className={inputBase} value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value as Jurisdiction | "")}>
-          <option value="">Choose a jurisdiction</option>
-          {JURISDICTIONS.map((j) => (
-            <option key={j} value={j}>
-              {j}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1 text-sm font-medium">
-        ADU type
-        <select className={inputBase} value={aduType} onChange={(e) => setAduType(e.target.value as AduType)}>
-          {ADU_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </label>
-      {error && <ErrorLine message={error} />}
-      <div className="flex gap-2">
-        <button type="submit" className={primaryButton} disabled={busy}>
-          {busy && <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" strokeWidth={1.5} />}
-          Create project
-        </button>
-        <button type="button" className={ghostButton} onClick={props.onCancel}>
-          Cancel
-        </button>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 sm:items-center sm:p-6"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
+      onKeyDown={onKeyDown}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        className="max-h-[calc(100dvh-24px)] w-full overflow-y-auto rounded-t-sheet border border-border bg-bg sm:max-w-[520px] sm:rounded-sheet"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+          <div className="grid gap-1">
+            <h2 id={titleId} className="font-display text-2xl font-semibold leading-[1.25]">
+              New project
+            </h2>
+            <p id={descriptionId} className="text-sm text-muted">
+              Where the work is and who reviews it. The site report starts as soon as you create it.
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            className={`-mr-2 -mt-1 inline-flex size-11 shrink-0 items-center justify-center rounded-control hover:bg-surface ${focusRing}`}
+            onClick={close}
+            disabled={busy}
+          >
+            <X aria-hidden className="size-5" strokeWidth={1.5} />
+          </button>
+        </div>
+        <form aria-label="New project" noValidate onSubmit={submit} className="grid gap-5 px-6 py-6">
+          <label className="grid gap-1.5 text-sm font-medium">
+            Project address
+            <input
+              className={inputBase}
+              value={address}
+              autoComplete="street-address"
+              placeholder="428 El Rio Rd, Danville"
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </label>
+          <div className="grid gap-1.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <label htmlFor={nameId} className="text-sm font-medium">
+                Project name
+              </label>
+              <span className="text-xs text-muted">Optional</span>
+            </div>
+            <input
+              id={nameId}
+              className={inputBase}
+              value={name}
+              placeholder="Uses the address if left blank"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-sm font-medium">
+              Jurisdiction
+              <select className={inputBase} value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value as Jurisdiction | "")}>
+                <option value="">Choose a jurisdiction</option>
+                {JURISDICTIONS.map((j) => (
+                  <option key={j} value={j}>
+                    {j}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">
+              ADU type
+              <select className={inputBase} value={aduType} onChange={(e) => setAduType(e.target.value as AduType)}>
+                {ADU_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {error && <ErrorLine message={error} />}
+          <div className="flex flex-col-reverse gap-2 border-t border-border pt-5 sm:flex-row sm:justify-end">
+            <button type="button" className={`${secondaryButton} sm:min-w-28`} onClick={close} disabled={busy}>
+              Cancel
+            </button>
+            <button type="submit" className={`${primaryButton} sm:min-w-36`} disabled={busy}>
+              {busy && <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" strokeWidth={1.5} />}
+              {busy ? "Creating…" : "Create project"}
+            </button>
+          </div>
+        </form>
       </div>
-    </form>
+    </div>
   );
 }
 

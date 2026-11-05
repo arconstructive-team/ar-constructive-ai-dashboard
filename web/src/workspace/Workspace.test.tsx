@@ -30,6 +30,29 @@ async function createProject(view: ReturnType<typeof browser>) {
 }
 
 describe("Workspace", () => {
+  it("opens new project as a modal dialog that Escape, the backdrop and Cancel close", () => {
+    const view = browser(new MemoryStore(), AHK);
+    const opener = view.getAllByRole("button", { name: "New project" })[0];
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = view.getByRole("dialog", { name: "New project" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    // Focus lands on the first field, the address.
+    expect(document.activeElement).toBe(within(dialog).getByLabelText("Project address"));
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+
+    fireEvent.click(opener);
+    fireEvent.mouseDown(view.getByRole("dialog").parentElement!);
+    expect(view.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(opener);
+    fireEvent.click(within(view.getByRole("dialog")).getByRole("button", { name: "Close" }));
+    expect(view.queryByRole("dialog")).toBeNull();
+  });
+
   it("creates a project, then creates and renames a chat", async () => {
     const store = new MemoryStore();
     const view = browser(store, AHK);
