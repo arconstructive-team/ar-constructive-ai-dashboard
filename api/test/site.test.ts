@@ -8,8 +8,8 @@ import { runTool, TOOL_SPECS } from "../src/chat/tools";
 import { createApp } from "../src/server";
 import { READ_SITE_REPORT_TOOL, runReadSiteReport, siteReportText, siteSummary } from "../src/site/chat";
 import { parseCensusGeocode, parseGoogleGeocode } from "../src/site/geocode";
-import { parseClimateZone, parseElevation, parseFire, parseFlood, parseSeismic } from "../src/site/hazards";
-import { bearing, SourceError, type Fetch } from "../src/site/http";
+import { parseClimateZone, parseElevation, parseFire, parseFlood, parseGoogleElevation, parseSeismic } from "../src/site/hazards";
+import { bearing, getJson, SourceError, type Fetch } from "../src/site/http";
 import { googleImageUrl, imagePath, mapLinks, parseStreetViewMetadata, satelliteImages } from "../src/site/imagery";
 import { COUNTY_ZONING, parseCountyZoning, parseJurisdiction } from "../src/site/jurisdiction";
 import { PARCEL_SOURCES, parcelAddressUrl, parcelSourceFor, parseParcel, streetName } from "../src/site/parcel";
@@ -449,5 +449,125 @@ describe("site report for the chat assistant", () => {
     expect(siteReportFrom(undefined)).toBeNull();
     expect(siteReportFrom({ version: 2, address: ADDRESS, generatedAt: "x", steps: {} })).toBeNull();
     expect(siteReportFrom({ version: 1, address: ADDRESS, generatedAt: "2026-11-05", steps: {} })).not.toBeNull();
+  });
+});
+
+describe("slow and flaky sources", () => {
+  const answers = (...steps: Array<number | "hang">) => {
+    let calls = 0;
+    const doFetch: Fetch = async (_input, init) => {
+      const step = steps[Math.min(calls++, steps.length - 1)];
+      if (step === "hang") {
+        return new Promise<Response>((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("timed out"), { name: "TimeoutError" }))),
+        );
+      }
+      if (step === 0) throw new TypeError("fetch failed");
+      return new Response(JSON.stringify(step === 200 ? { value: 417.9 } : { error: "down" }), { status: step });
+    };
+    return { fetch: doFetch, calls: () => calls };
+  };
+
+  it("tries again after HTTP 5xx or an unreachable source, then answers", async () => {
+    const http = answers(500, 0, 200);
+    await expect(getJson("https://example.test", { fetch: http.fetch, retries: 2, retryDelayMs: 0 })).resolves.toEqual({ value: 417.9 });
+    expect(http.calls()).toBe(3);
+  });
+
+  it("gives up after the last try with the source's own message", async () => {
+    const http = answers(503);
+    await expect(getJson("https://example.test", { fetch: http.fetch, retries: 1, retryDelayMs: 0 })).rejects.toThrow("HTTP 503");
+    expect(http.calls()).toBe(2);
+  });
+
+  it("does not try again after a timeout or HTTP 4xx", async () => {
+    const slow = answers("hang", 200);
+    await expect(getJson("https://example.test", { fetch: slow.fetch, timeoutMs: 20, retries: 1, retryDelayMs: 0 })).rejects.toThrow("did not answer in time");
+    expect(slow.calls()).toBe(1);
+    const denied = answers(403, 200);
+    await expect(getJson("https://example.test", { fetch: denied.fetch, retries: 1, retryDelayMs: 0 })).rejects.toThrow("HTTP 403");
+    expect(denied.calls()).toBe(1);
+  });
+
+  it("does not try again by default", async () => {
+    const http = answers(500, 200);
+    await expect(getJson("https://example.test", { fetch: http.fetch })).rejects.toThrow("HTTP 500");
+    expect(http.calls()).toBe(1);
+  });
+
+  it("the elevation step survives one USGS HTTP 500", async () => {
+    const fake = fakeFetch();
+    let usgsCalls = 0;
+    const flaky: Fetch = async (input, init) => {
+      if (String(input).includes("epqs.nationalmap.gov") && usgsCalls++ === 0) {
+        return new Response(JSON.stringify({ message: "Internal server error" }), { status: 500 });
+      }
+      return fake.fetch(input, init);
+    };
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: flaky, now: NOW, retryDelayMs: 0 });
+    expect(report.steps.elevation).toMatchObject({ status: "ok", data: { feet: 417.9 } });
+    expect(usgsCalls).toBe(2);
+  });
+
+  // The live Google answer for 428 El Rio Rd (2026-11-05): 126.05 m.
+  const googleElevation = { status: "OK", results: [{ elevation: 126.0508499145508, resolution: 4.77 }] };
+  const withGoogleElevation = (usgs: number, google: unknown = googleElevation) => {
+    const fake = fakeFetch({ fail: { "epqs.nationalmap.gov": usgs } });
+    const urls: string[] = [];
+    const doFetch: Fetch = async (input, init) => {
+      if (String(input).includes("maps/api/elevation")) {
+        urls.push(String(input));
+        return new Response(JSON.stringify(google), { status: 200 });
+      }
+      return fake.fetch(input, init);
+    };
+    return { fetch: doFetch, googleUrls: urls };
+  };
+
+  it("reads a Google Elevation answer in feet", () => {
+    expect(parseGoogleElevation(googleElevation)).toEqual({ feet: 413.6 });
+    expect(() => parseGoogleElevation({ status: "REQUEST_DENIED", error_message: "API not enabled" })).toThrow(/REQUEST_DENIED: API not enabled/);
+    expect(() => parseGoogleElevation(null)).toThrow(SourceError);
+  });
+
+  it("falls back to Google Elevation when USGS fails, and says so", async () => {
+    const http = withGoogleElevation(500);
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: http.fetch, now: NOW, retryDelayMs: 0 });
+    const e = report.steps.elevation;
+    expect(e).toMatchObject({ status: "ok", data: { feet: 413.6 } });
+    expect(e.note).toBe("USGS failed (The source answered with HTTP 500); the Google Elevation API was used.");
+    expect(e.sources.map((s) => s.name)).toEqual(["USGS Elevation Point Query Service", "Google Elevation API"]);
+    // The stored source link never carries the key.
+    expect(e.sources[1]!.url).not.toContain(KEY);
+    expect(http.googleUrls).toHaveLength(1);
+  });
+
+  it("does not ask Google when USGS answers", async () => {
+    const http = withGoogleElevation(0);
+    const fake = fakeFetch();
+    const report = await buildSiteReport(ADDRESS, {
+      apiKey: KEY,
+      fetch: (input, init) => (String(input).includes("epqs") ? fake.fetch(input, init) : http.fetch(input, init)),
+      now: NOW,
+    });
+    expect(report.steps.elevation).toMatchObject({ status: "ok", data: { feet: 417.9 } });
+    expect(report.steps.elevation.note).toBeUndefined();
+    expect(http.googleUrls).toHaveLength(0);
+  });
+
+  it("keeps the USGS failure without a Google key", async () => {
+    const http = withGoogleElevation(500);
+    const report = await buildSiteReport(ADDRESS, { fetch: http.fetch, now: NOW, retryDelayMs: 0 });
+    expect(report.steps.elevation).toMatchObject({ status: "failed", error: "The source answered with HTTP 500." });
+    expect(http.googleUrls).toHaveLength(0);
+  });
+
+  it("names both failures when Google fails too", async () => {
+    const http = withGoogleElevation(500, { status: "REQUEST_DENIED" });
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: http.fetch, now: NOW, retryDelayMs: 0 });
+    expect(report.steps.elevation).toMatchObject({
+      status: "failed",
+      error: "USGS failed (The source answered with HTTP 500), and so did Google (Google Elevation answered REQUEST_DENIED).",
+    });
   });
 });

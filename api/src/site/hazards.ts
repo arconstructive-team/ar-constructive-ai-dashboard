@@ -96,6 +96,25 @@ export function parseElevation(body: unknown): Elevation {
   return { feet: round(value, 1) };
 }
 
+export const GOOGLE_ELEVATION = "https://maps.googleapis.com/maps/api/elevation/json";
+
+export function googleElevationUrl(at: LatLng, apiKey: string): string {
+  return `${GOOGLE_ELEVATION}?${new URLSearchParams({ locations: `${at.lat},${at.lng}`, key: apiKey })}`;
+}
+
+const FEET_PER_METER = 3.28084;
+
+/** Reads a Google Elevation API answer (meters) as feet: the backup when USGS fails. */
+export function parseGoogleElevation(body: unknown): Elevation {
+  const b = (body ?? {}) as { status?: string; error_message?: string; results?: { elevation?: unknown }[] };
+  if (b.status !== "OK") {
+    throw new SourceError(`Google Elevation answered ${b.status ?? "with no status"}${b.error_message ? `: ${b.error_message}` : "."}`);
+  }
+  const meters = num(b.results?.[0]?.elevation);
+  if (meters === undefined || !Number.isFinite(meters)) throw new SourceError("Google has no elevation for this point.");
+  return { feet: round(meters * FEET_PER_METER, 1) };
+}
+
 export const CEC_CLIMATE_ZONES = "https://services3.arcgis.com/bWPjFyq029ChCGur/arcgis/rest/services/BuildingClimateZones_CEC_2015/FeatureServer/0";
 export const CEC_CHECK = "https://www.energy.ca.gov/programs-and-topics/programs/building-energy-efficiency-standards/climate-zone-tool-maps-and";
 
