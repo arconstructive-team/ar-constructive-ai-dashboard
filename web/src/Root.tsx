@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { App } from "./App";
+import { createFirestoreSource } from "./artifacts/firestoreSource";
 import { db } from "./auth/firebase";
 import { useSignedInUser } from "./auth/user";
 import { CODE_CYCLE } from "./lib/project";
@@ -22,6 +23,8 @@ export function Root({ store: injected }: { store?: WorkspaceStore } = {}) {
   const user = useSignedInUser();
   const store = useMemo(() => injected ?? (db ? createFirestoreStore(db) : null), [injected]);
   const assistant = useMemo(() => (store ? new Assistant({ store }) : null), [store]);
+  // The artifact canvas reads the same Firestore documents the assistant writes.
+  const canvas = useMemo(() => (!injected && db ? createFirestoreSource(db) : undefined), [injected]);
 
   useEffect(() => {
     const onHash = () => setRoute(routeFromHash(window.location.hash));
@@ -60,7 +63,7 @@ export function Root({ store: injected }: { store?: WorkspaceStore } = {}) {
         </div>
       </header>
       {store && assistant && user ? (
-        <Workspace store={store} assistant={assistant} user={user} />
+        <Workspace store={store} assistant={assistant} user={user} canvas={canvas} />
       ) : (
         <main className="mx-auto max-w-[680px] px-4 py-16">
           <p className="text-base text-ink">The team workspace needs sign-in. Sign in with your team account to see the projects.</p>

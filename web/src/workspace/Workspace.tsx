@@ -15,6 +15,8 @@ import { authorName } from "../auth/user";
 import { RegeneratedSheets } from "../Regenerated";
 import { ASSISTANT_NAME, type Assistant, type ChatContext } from "./assistant";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { ArtifactPane as ArtifactCanvas } from "../artifacts/ArtifactPane";
+import type { ArtifactSource } from "../artifacts/types";
 import {
   KIND_LABEL,
   type Author,
@@ -63,9 +65,14 @@ export interface WorkspaceProps {
   store: WorkspaceStore;
   assistant: Assistant;
   user: Author;
+  /**
+   * The artifact canvas source (ARCO-14: live render, editing, versions, export).
+   * Without it the right pane shows a plain preview (tests with the memory store).
+   */
+  canvas?: ArtifactSource;
 }
 
-export function Workspace({ store, assistant, user }: WorkspaceProps) {
+export function Workspace({ store, assistant, user, canvas }: WorkspaceProps) {
   const [projects, setProjects] = useState<Loadable<Project[]>>({ kind: "loading" });
   const [projectId, setProjectId] = useState<string | null>(null);
   const [chats, setChats] = useState<Loadable<Chat[]>>({ kind: "loading" });
@@ -173,6 +180,7 @@ export function Workspace({ store, assistant, user }: WorkspaceProps) {
           chat={chat}
           panel={panel}
           onPanel={setPanel}
+          canvas={canvas}
         />
       ) : (
         <section
@@ -388,8 +396,9 @@ function ChatSession(props: {
   chat: Chat;
   panel: Panel;
   onPanel: (panel: Panel) => void;
+  canvas?: ArtifactSource;
 }) {
-  const { store, assistant, user, project, chat, panel } = props;
+  const { store, assistant, user, project, chat, panel, canvas } = props;
   const [messages, setMessages] = useState<Loadable<Message[]>>({ kind: "loading" });
   const [chosenArtifact, setChosenArtifact] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -481,7 +490,16 @@ function ChatSession(props: {
         className={`${panel === "artifact" ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col lg:flex`}
       >
         {artifactId ? (
-          <ArtifactPane key={artifactId} store={store} assistant={assistant} projectId={project.id} artifactId={artifactId} />
+          <ArtifactPane
+            key={artifactId}
+            store={store}
+            assistant={assistant}
+            canvas={canvas}
+            projectId={project.id}
+            projectName={project.name}
+            editorName={authorName(user)}
+            artifactId={artifactId}
+          />
         ) : (
           <div className="flex flex-1 items-center justify-center p-8">
             <p className="max-w-[420px] text-center text-muted">
@@ -709,8 +727,34 @@ function StatusChip({ artifact }: { artifact: WorkspaceArtifact }) {
   );
 }
 
-function ArtifactPane(props: { store: WorkspaceStore; assistant: Assistant; projectId: string; artifactId: string }) {
-  const { store, assistant, projectId, artifactId } = props;
+function ViewToggle(props: { view: "document" | "sheets"; onView: (view: "document" | "sheets") => void }) {
+  return (
+    <div role="group" aria-label="Artifact view" className="flex">
+      {(["document", "sheets"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={props.view === v}
+          onClick={() => props.onView(v)}
+          className={`h-9 border px-3 text-sm font-medium ${props.view === v ? "border-ink bg-ink/12" : "border-border"} ${focusRing}`}
+        >
+          {v === "document" ? "Document" : "Sheets side by side"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ArtifactPane(props: {
+  store: WorkspaceStore;
+  assistant: Assistant;
+  canvas?: ArtifactSource;
+  projectId: string;
+  projectName: string;
+  editorName: string;
+  artifactId: string;
+}) {
+  const { store, assistant, canvas, projectId, artifactId } = props;
   const [state, setState] = useState<Loadable<WorkspaceArtifact | null>>({ kind: "loading" });
   const [view, setView] = useState<"document" | "sheets">("document");
 
@@ -741,27 +785,35 @@ function ArtifactPane(props: { store: WorkspaceStore; assistant: Assistant; proj
   const session = assistant.sessionSet(artifact.chatId);
   const canCompare = artifact.kind === "sheet_set" && session?.file !== undefined && artifact.status === "ready";
 
+  // The artifact canvas (ARCO-14) shows the document: live render, editing, versions and export.
+  if (canvas && !(canCompare && view === "sheets")) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {canCompare && (
+          <div className="flex justify-end border-b border-border px-4 py-1">
+            <ViewToggle view={view} onView={setView} />
+          </div>
+        )}
+        <div className="min-h-0 flex-1">
+          <ArtifactCanvas
+            source={canvas}
+            projectId={projectId}
+            artifactId={artifactId}
+            projectName={props.projectName}
+            editorName={props.editorName}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <header className="flex min-h-14 flex-wrap items-center gap-3 border-b border-border px-6 py-2">
         <h2 className="min-w-0 flex-1 truncate font-display text-base font-semibold">{artifact.title}</h2>
         <span className="rounded-chip bg-ink/12 px-1.5 py-0.5 text-xs font-medium text-ink">{KIND_LABEL[artifact.kind]}</span>
         <StatusChip artifact={artifact} />
-        {canCompare && (
-          <div role="group" aria-label="Artifact view" className="flex">
-            {(["document", "sheets"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                aria-pressed={view === v}
-                onClick={() => setView(v)}
-                className={`h-9 border px-3 text-sm font-medium ${view === v ? "border-ink bg-ink/12" : "border-border"} ${focusRing}`}
-              >
-                {v === "document" ? "Document" : "Sheets side by side"}
-              </button>
-            ))}
-          </div>
-        )}
+        {canCompare && <ViewToggle view={view} onView={setView} />}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 md:px-12">
         {artifact.status === "error" && (
