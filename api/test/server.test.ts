@@ -40,7 +40,7 @@ describe("POST /api/check", () => {
   it("answers 415 for a non-PDF", async () => {
     const res = await post("PK\u0003\u0004 zip data");
     expect(res.status).toBe(415);
-    expect((await res.json()).error).toContain("not a PDF");
+    expect(((await res.json()) as { error: string }).error).toContain("not a PDF");
   });
 
   it("answers 413 for a file over the size limit", async () => {
@@ -51,7 +51,7 @@ describe("POST /api/check", () => {
   it("runs the check on a PDF", async () => {
     const res = await post("%PDF-1.7\n");
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { pack: string; pages: unknown[]; findings: unknown[] };
     expect(body.pack).toBe("danville-2025");
     expect(body.pages).toHaveLength(51);
     expect(body.findings.length).toBeGreaterThanOrEqual(22);

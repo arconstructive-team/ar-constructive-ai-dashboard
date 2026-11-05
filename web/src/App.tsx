@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, FileText, Loader2, Upload } from "lucide-react";
+import { AlertCircle, FileText, Loader2, Upload } from "lucide-react";
 import {
   ADU_TYPES,
   CODE_CYCLE,
