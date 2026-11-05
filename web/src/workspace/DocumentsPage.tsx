@@ -126,12 +126,12 @@ export function DocumentsPage(props: {
           key: `artifact:${a.id}`,
           name: a.title,
           kind: `${KIND_LABEL[a.kind]}, version ${a.version}`,
-          from: `The assistant in ${chatTitle(a.chatId)}`,
+          from: a.chatId ? `The assistant in ${chatTitle(a.chatId)}` : "Site info for the project address",
           date: a.updatedAt,
           readable: a.status === "ready" ? "Full text" : a.status === "generating" ? "Being written" : "Stopped",
           icon: FileText,
           open: {
-            href: routeHref({ projectId: project.id, chatId: a.chatId, artifactId: a.id }),
+            href: routeHref({ projectId: project.id, chatId: a.chatId || null, artifactId: a.id }),
             onClick: (e: MouseEvent<HTMLAnchorElement>) => follow(e, () => props.onArtifact(a.chatId, a.id)),
           },
         }))

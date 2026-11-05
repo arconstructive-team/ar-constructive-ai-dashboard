@@ -11,6 +11,8 @@
  * - projects/{projectId}/artifacts/{artifactId}: title, kind, status, content, version, chatId, updatedBy, updatedAt
  * - projects/{projectId}/artifacts/{artifactId}/versions/{version}: version, title, content, updatedBy, updatedAt, chatId
  * - projects/{projectId}/site/report: the site report (see site/types.ts); the chat assistant reads it too
+ * - projects/{projectId}/artifacts/site-report: the same report as an editable document (chatId ""),
+ *   rewritten as a new version each time the site info is gathered
  */
 import type { PageText } from "../lib/engine";
 import type { AduType, Jurisdiction, ProjectData } from "../lib/project";
@@ -134,6 +136,7 @@ export interface WorkspaceArtifact {
   content: string;
   /** The current version number. 0 while the first generation runs. */
   version: number;
+  /** The chat it was written in; "" for the project's site report. */
   chatId: string;
   updatedBy: string;
   updatedAt: Date | null;
@@ -208,6 +211,13 @@ export interface WorkspaceStore {
   updateArtifact(projectId: string, artifactId: string, patch: ArtifactPatch): Promise<void>;
   /** Saves a new version, makes it current and sets status "ready". Resolves with the version number. */
   commitVersion(projectId: string, artifactId: string, input: VersionInput): Promise<number>;
+
+  /**
+   * Writes the project's site report artifact (id SITE_ARTIFACT_ID, no chat): creates it at
+   * version 1, or saves a new version on top of the team's edits, which stay in the history.
+   * Resolves with the artifact id.
+   */
+  saveSiteArtifact(projectId: string, input: VersionInput): Promise<string>;
 
   saveSet(projectId: string, chatId: string, set: NewSet): Promise<string>;
   updateSetProject(projectId: string, chatId: string, setId: string, project: ProjectData): Promise<void>;

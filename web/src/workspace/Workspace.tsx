@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   AlertCircle,
+  ArrowLeft,
   ChevronDown,
   FileText,
   FolderOpen,
@@ -24,6 +25,7 @@ import { SitePanel, type SiteRun } from "./SitePanel";
 import { DocumentsPage } from "./DocumentsPage";
 import { chatActivity, chatTimeLabel, chatTimeTitle, groupChatsByDate } from "./chatGroups";
 import type { SiteApi } from "../site/siteApi";
+import { siteArtifactTitle, siteReportMarkdown } from "../site/siteMarkdown";
 import { ArtifactPane as ArtifactCanvas } from "../artifacts/ArtifactPane";
 import { hashRouter, routeHref, type Router, type WorkspaceRoute } from "./router";
 import type { ArtifactSource } from "../artifacts/types";
@@ -128,19 +130,31 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
   }, [store, projectId]);
 
   const [artifactCounts, setArtifactCounts] = useState<Record<string, number>>({});
+  /** The open project's site report artifact, once the site info has been gathered. */
+  const [siteArtifactId, setSiteArtifactId] = useState<string | null>(null);
   useEffect(() => {
     setArtifactCounts({});
+    setSiteArtifactId(null);
     if (!projectId) return;
     return store.watchProjectArtifacts(
       projectId,
       (artifacts) => {
         const counts: Record<string, number> = {};
-        for (const a of artifacts) counts[a.chatId] = (counts[a.chatId] ?? 0) + 1;
+        for (const a of artifacts) if (a.chatId) counts[a.chatId] = (counts[a.chatId] ?? 0) + 1;
         setArtifactCounts(counts);
+        setSiteArtifactId(artifacts.find((a) => !a.chatId)?.id ?? null);
       },
-      () => setArtifactCounts({}),
+      () => {
+        setArtifactCounts({});
+        setSiteArtifactId(null);
+      },
     );
   }, [store, projectId]);
+
+  function openProjectArtifact(id: string, artifactId: string) {
+    go({ projectId: id, chatId: null, artifactId });
+    setPanel("chat");
+  }
 
   const project = projects.kind === "ready" ? (projects.data.find((p) => p.id === projectId) ?? null) : null;
   const chat = chats.kind === "ready" ? (chats.data.find((c) => c.id === chatId) ?? null) : null;
@@ -168,6 +182,13 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
     try {
       const report = await site.buildReport(address);
       await store.saveSiteReport(id, report);
+      // The same facts as an editable document in the project's Documents. A refresh adds a
+      // version; the team's earlier edits stay in the version history.
+      await store.saveSiteArtifact(id, {
+        title: siteArtifactTitle(report.address),
+        content: siteReportMarkdown(report),
+        updatedBy: ASSISTANT_NAME,
+      });
       setSiteRuns((runs) => ({ ...runs, [id]: { kind: "idle" } }));
     } catch (error) {
       const message = error instanceof Error && error.message ? error.message : "Try again in a minute.";
@@ -257,10 +278,33 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
                 onUpload={(file) => assistant.addDocument(project.id, file, authorName(user))}
                 onProject={() => openProject(project.id)}
                 onArtifact={(chatId, artifactId) => {
+                  if (!chatId) return openProjectArtifact(project.id, artifactId);
                   go({ projectId: project.id, chatId, artifactId });
                   setPanel("artifact");
                 }}
               />
+            </div>
+          ) : project && route.artifactId && !chatId ? (
+            <div className="flex w-full max-w-[1200px] flex-col gap-4 px-4 pt-8 pb-12 md:px-8 lg:h-full lg:pt-12">
+              <a
+                href={routeHref({ projectId: project.id, chatId: null })}
+                onClick={(e) => followLink(e, () => openProject(project.id))}
+                className={`inline-flex min-h-11 w-fit items-center gap-1 text-sm font-medium text-muted hover:text-ink ${focusRing}`}
+              >
+                <ArrowLeft aria-hidden className="size-4" strokeWidth={1.5} />
+                {project.name}
+              </a>
+              <div className="flex min-h-[70dvh] flex-1 flex-col border border-border lg:min-h-0">
+                <ArtifactPane
+                  store={store}
+                  assistant={assistant}
+                  canvas={canvas}
+                  projectId={project.id}
+                  projectName={project.name}
+                  editorName={authorName(user)}
+                  artifactId={route.artifactId}
+                />
+              </div>
             </div>
           ) : project ? (
             <div className="grid w-full max-w-[1200px] gap-16 px-4 pt-8 pb-24 md:px-8 lg:pt-12">
@@ -280,6 +324,14 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
                 api={site}
                 run={siteRuns[project.id] ?? { kind: "idle" }}
                 onRefresh={() => void refreshSite(project.id, project.address)}
+                document={
+                  siteArtifactId
+                    ? {
+                        href: routeHref({ projectId: project.id, chatId: null, artifactId: siteArtifactId }),
+                        open: () => openProjectArtifact(project.id, siteArtifactId),
+                      }
+                    : undefined
+                }
               />
             </div>
           ) : projectId && projects.kind === "ready" ? (

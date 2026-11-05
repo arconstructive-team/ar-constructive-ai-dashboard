@@ -25,6 +25,7 @@ import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes, type Fire
 import { ADU_TYPES, JURISDICTIONS, type AduType, type Jurisdiction, type ProjectData } from "../lib/project";
 import type { PageText } from "../lib/engine";
 import { isSiteReport } from "../site/types";
+import { SITE_ARTIFACT_ID } from "../site/siteMarkdown";
 import {
   ARTIFACT_KINDS,
   ARTIFACT_STATUSES,
@@ -330,6 +331,33 @@ export function createFirestoreStore(db: Firestore, storage?: FirebaseStorage | 
           updatedAt: serverTimestamp(),
         });
         return version;
+      });
+    },
+
+    async saveSiteArtifact(projectId, input) {
+      return runTransaction(db, async (tx) => {
+        const ref = artifactDoc(projectId, SITE_ARTIFACT_ID);
+        const snap = await tx.get(ref);
+        const version = snap.exists() ? artifactFromData(snap.id, snap.data()).version + 1 : 1;
+        tx.set(doc(db, "projects", projectId, "artifacts", SITE_ARTIFACT_ID, "versions", String(version)), {
+          version,
+          title: input.title,
+          content: input.content,
+          updatedBy: input.updatedBy,
+          updatedAt: serverTimestamp(),
+          chatId: "",
+        });
+        tx.set(ref, {
+          title: input.title,
+          kind: "document",
+          content: input.content,
+          updatedBy: input.updatedBy,
+          version,
+          status: "ready",
+          chatId: "",
+          updatedAt: serverTimestamp(),
+        });
+        return SITE_ARTIFACT_ID;
       });
     },
 

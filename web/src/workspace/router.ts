@@ -4,10 +4,11 @@
 //   #/projects/{projectId}/chats/{id}   a chat with its artifact canvas
 //   #/projects/{projectId}/chats/{id}/artifacts/{artifactId}   that chat with one artifact open
 //   #/projects/{projectId}/documents    the project's documents: uploads and artifacts
+//   #/projects/{projectId}/artifacts/{artifactId}   an artifact written outside a chat (the site report)
 export interface WorkspaceRoute {
   projectId: string | null;
   chatId: string | null;
-  /** The artifact to open in the chat's canvas (otherwise its latest). */
+  /** The artifact to open in the chat's canvas (otherwise its latest), or on its own page without a chat. */
   artifactId?: string | null;
   /** A page of the project other than its overview. */
   page?: "documents";
@@ -21,11 +22,14 @@ export interface Router {
 }
 
 export function parseRoute(hash: string): WorkspaceRoute {
-  const m = hash.match(/^#\/projects\/([^/?#]+)(?:\/(documents)|\/chats\/([^/?#]+)(?:\/artifacts\/([^/?#]+))?)?/);
+  const m = hash.match(
+    /^#\/projects\/([^/?#]+)(?:\/(documents)|\/chats\/([^/?#]+)(?:\/artifacts\/([^/?#]+))?|\/artifacts\/([^/?#]+))?/,
+  );
   if (!m) return { projectId: null, chatId: null };
   const route: WorkspaceRoute = { projectId: decodeURIComponent(m[1]!), chatId: m[3] ? decodeURIComponent(m[3]) : null };
   if (m[2]) route.page = "documents";
   if (m[4]) route.artifactId = decodeURIComponent(m[4]);
+  if (m[5]) route.artifactId = decodeURIComponent(m[5]);
   return route;
 }
 
@@ -36,6 +40,7 @@ export function routeHref({ projectId, chatId, artifactId, page }: WorkspaceRout
     const chat = `${project}/chats/${encodeURIComponent(chatId)}`;
     return artifactId ? `${chat}/artifacts/${encodeURIComponent(artifactId)}` : chat;
   }
+  if (artifactId) return `${project}/artifacts/${encodeURIComponent(artifactId)}`;
   return page === "documents" ? `${project}/documents` : project;
 }
 

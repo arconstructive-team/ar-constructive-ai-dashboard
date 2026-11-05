@@ -7,6 +7,7 @@ import { memoryRouter } from "./router";
 import { fakeCheck, PAGES } from "./fixtures.test-utils";
 import { createSiteApi, type SiteApi } from "../site/siteApi";
 import { isSiteReport, type SiteReport, type Step } from "../site/types";
+import { siteReportMarkdown } from "../site/siteMarkdown";
 
 const AHK = { uid: "u1", email: "ahk.archteam@gmail.com", name: "Ahk" };
 const ADDRESS = "428 El Rio Rd, Danville, CA 94526";
@@ -178,6 +179,53 @@ describe("Site section", () => {
     await store.saveSiteReport(projectId, elRioReport());
     expect((await section.findAllByText("Town of Danville (incorporated)")).length).toBeGreaterThan(0);
     expect(screen.queryAllByRole("img")).toHaveLength(0);
+  });
+});
+
+describe("Site report document", () => {
+  it("writes the site info as an editable document in Documents, and adds a version on refresh", async () => {
+    const store = new MemoryStore();
+    const { site, buildReport } = fakeSite(async () => elRioReport());
+    const view = mount(store, site);
+    await createProject(view);
+    const projectId = [...store.projects.keys()][0]!;
+
+    const section = within(await view.findByRole("region", { name: "Site" }));
+    const edit = await section.findByRole("link", { name: "Edit as document" });
+    const artifact = [...store.artifacts.values()].find((a) => !a.chatId)!;
+    expect(artifact.title).toBe(`Site report: ${ADDRESS}`);
+    expect(artifact.kind).toBe("document");
+    expect(artifact.version).toBe(1);
+    expect(artifact.content).toContain("| Parcel (APN) | APN 200-030-023 (Contra Costa County) |");
+    expect(artifact.content).toContain("| Flood (FEMA) | Not read |");
+    expect(edit.getAttribute("href")).toBe(`#/projects/${projectId}/artifacts/${encodeURIComponent(artifact.id)}`);
+
+    // The team edits it; a refresh writes a new version and keeps the edit in the history.
+    await store.commitVersion(projectId, artifact.id, { title: artifact.title, content: "Our notes", updatedBy: "Ahk" });
+    fireEvent.click(section.getByRole("button", { name: "Refresh site info" }));
+    await waitFor(() => expect(buildReport).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(store.artifacts.get(artifact.id)?.version).toBe(3));
+    expect(store.versions.get(artifact.id)?.map((v) => v.content)).toContain("Our notes");
+
+    // It opens on its own page, and is listed in the project's Documents.
+    fireEvent.click(edit);
+    expect(await view.findByRole("article", { name: `Site report: ${ADDRESS}` })).toBeTruthy();
+    fireEvent.click(view.getByRole("link", { name: "El Rio ADU" }));
+    fireEvent.click((await view.findAllByRole("link", { name: "Documents" }))[0]!);
+    const table = within(await view.findByRole("table"));
+    expect(table.getByRole("link", { name: `Open Site report: ${ADDRESS}` }).getAttribute("href")).toContain("/artifacts/");
+    expect(table.getByText("Site info for the project address")).toBeTruthy();
+  });
+
+  it("turns a report into markdown tables that keep cells whole", () => {
+    const report = elRioReport();
+    report.steps.zoning = { status: "ok", sources: [], data: { district: "R-6 | single family", description: "Line one\nline two" } };
+    const md = siteReportMarkdown(report);
+    expect(md.startsWith(`# Site report: ${ADDRESS}`)).toBe(true);
+    expect(md).toContain("| Zoning | R-6 \\| single family, Line one line two |");
+    expect(md).toContain("**Not read:** FEMA flood zone");
+    expect(md).toContain("## Sources");
+    expect(md).toContain("check by hand at https://msc.fema.gov/portal/search?AddressQuery=428");
   });
 });
 

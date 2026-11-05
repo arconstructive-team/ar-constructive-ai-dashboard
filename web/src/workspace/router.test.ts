@@ -16,6 +16,8 @@ describe("workspace routes", () => {
     expect(routeHref({ projectId: "p1", chatId: null, page: "documents" })).toBe("#/projects/p1/documents");
     expect(parseRoute("#/projects/p1/chats/c9/artifacts/a3")).toEqual({ projectId: "p1", chatId: "c9", artifactId: "a3" });
     expect(routeHref({ projectId: "p1", chatId: "c9", artifactId: "a3" })).toBe("#/projects/p1/chats/c9/artifacts/a3");
+    expect(parseRoute("#/projects/p1/artifacts/site-report")).toEqual({ projectId: "p1", chatId: null, artifactId: "site-report" });
+    expect(routeHref({ projectId: "p1", chatId: null, artifactId: "site-report" })).toBe("#/projects/p1/artifacts/site-report");
   });
 
   it("tells subscribers when the route changes", () => {
