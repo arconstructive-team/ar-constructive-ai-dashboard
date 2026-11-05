@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, AlertTriangle, Check, ChevronRight, Info, Loader2, Minus, RefreshCw } from "lucide-react";
+import { AlertCircle, AlertTriangle, Check, ChevronRight, FileText, Info, Loader2, Minus, RefreshCw } from "lucide-react";
 import type { SiteApi } from "../site/siteApi";
 import { fmt } from "../site/geometry";
 import { EMBED_KEY, GoogleButtons, GoogleCanvas } from "../site/GoogleCanvas";
@@ -39,8 +39,10 @@ export function SitePanel(props: {
   api?: SiteApi;
   run: SiteRun;
   onRefresh: () => void;
+  /** The site report as an editable document in the project's Documents, once it exists. */
+  document?: { href: string; open: () => void };
 }) {
-  const { store, project, api, run, onRefresh } = props;
+  const { store, project, api, run, onRefresh, document } = props;
   const [report, setReport] = useState<Loadable<SiteReport | null>>({ kind: "loading" });
 
   useEffect(() => {
@@ -70,6 +72,21 @@ export function SitePanel(props: {
                 : "This project has no address."}
           </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        {document && (
+          <a
+            href={document.href}
+            onClick={(e) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              document.open();
+            }}
+            className={secondaryButton}
+          >
+            <FileText aria-hidden className="size-4" strokeWidth={1.5} />
+            Edit as document
+          </a>
+        )}
         <button type="button" className={secondaryButton} onClick={onRefresh} disabled={!api || !hasAddress || running}>
           {running ? (
             <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" strokeWidth={1.5} />
@@ -78,6 +95,7 @@ export function SitePanel(props: {
           )}
           Refresh site info
         </button>
+        </div>
       </div>
 
       {!api && (

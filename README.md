@@ -48,6 +48,9 @@ Data lives in Firestore (`web/src/workspace/types.ts` has the full layout):
 
 - `projects/{projectId}`, with `chats/{chatId}/messages/{messageId}` and `chats/{chatId}/sets/{setId}` (the set text, for follow-ups)
 - `projects/{projectId}/artifacts/{artifactId}`, with `versions/{version}`
+- `projects/{projectId}/artifacts/site-report`: the site info as an editable document (no chat). It is written when a
+  project is created and on every "Refresh site info"; each refresh saves a new version, and the team's edits stay in
+  the version history. It opens at `#/projects/{projectId}/artifacts/site-report` and is listed in Documents.
 
 `firestore.rules` lets only the two signed-in team accounts read or write, and denies everything else.
 CI tests the rules on the Firestore emulator (`rules` job, `web/rules/firestore.rules.test.ts`).

@@ -10,6 +10,7 @@ import type {
   WorkspaceStore,
 } from "./types";
 import type { SiteReport } from "../site/types";
+import { SITE_ARTIFACT_ID } from "../site/siteMarkdown";
 
 interface VersionRecord {
   version: number;
@@ -33,6 +34,8 @@ export class MemoryStore implements WorkspaceStore {
   versions = new Map<string, VersionRecord[]>();
   sets = new Map<string, StoredSet[]>();
   siteReports = new Map<string, SiteReport>();
+  /** Artifacts written outside a chat (the site report), by artifact id: the project they belong to. */
+  artifactProjects = new Map<string, string>();
   /** Uploaded files by project, newest first, with their text and the bytes. */
   documents = new Map<string, Array<ProjectDocument & { pages: PageText[]; file: Blob }>>();
   private listeners = new Set<() => void>();
@@ -116,6 +119,13 @@ export class MemoryStore implements WorkspaceStore {
     for (const [id, chat] of this.chats) if (chat.projectId === projectId) await this.deleteChat(projectId, id);
     this.documents.delete(projectId);
     this.siteReports.delete(projectId);
+    for (const [id, p] of this.artifactProjects) {
+      if (p === projectId) {
+        this.artifacts.delete(id);
+        this.versions.delete(id);
+        this.artifactProjects.delete(id);
+      }
+    }
     this.projects.delete(projectId);
     this.emit();
   }
@@ -239,11 +249,22 @@ export class MemoryStore implements WorkspaceStore {
     return this.watch(() =>
       onData(
         [...this.artifacts.values()]
-          .filter((a) => this.chats.get(a.chatId)?.projectId === projectId)
+          .filter((a) => (this.chats.get(a.chatId)?.projectId ?? this.artifactProjects.get(a.id)) === projectId)
           .sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0))
           .map((a) => ({ ...a })),
       ),
     );
+  }
+
+  async saveSiteArtifact(projectId: string, input: Parameters<WorkspaceStore["saveSiteArtifact"]>[1]) {
+    // One store holds every project, so the memory key includes the project.
+    const id = `${SITE_ARTIFACT_ID}:${projectId}`;
+    if (!this.artifacts.has(id)) {
+      this.artifacts.set(id, { id, ...input, kind: "document", chatId: "", status: "ready", version: 0, updatedAt: this.now() });
+      this.artifactProjects.set(id, projectId);
+    }
+    await this.commitVersion(projectId, id, input);
+    return id;
   }
 
   async saveSiteReport(projectId: string, report: SiteReport) {
