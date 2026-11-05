@@ -153,7 +153,13 @@ describe("runChatTurn", () => {
     expect(req.system[1]).toMatch(/Jurisdiction: Town of Danville/);
     expect(req.system[1]).toMatch(/el-rio\.pdf \(51 pages\)/);
     expect(req.messages.at(-1)).toEqual({ role: "user", content: "Rafi: what is the max height for a detached ADU in Danville?" });
-    expect(req.tools.map((t) => t.name)).toEqual(["run_permit_check", "regenerate_sheets", "read_sheet_text", "create_or_update_artifact"]);
+    expect(req.tools.map((t) => t.name)).toEqual([
+      "run_permit_check",
+      "regenerate_sheets",
+      "read_sheet_text",
+      "create_or_update_artifact",
+      "read_site_report",
+    ]);
   });
 
   it("runs the permit check as a tool and saves the issue report as a new artifact version", async () => {
