@@ -107,7 +107,7 @@ export async function buildSiteReport(address: string, options: PipelineOptions 
     } else {
       note = "No Google key on the server; the US Census geocoder was used.";
     }
-    return { status: "ok", data: parseCensusGeocode(await get("US Census Geocoder", censusGeocodeUrl(address))), note };
+    return { status: "ok", data: parseCensusGeocode(await get("US Census Geocoder", censusGeocodeUrl(address)), address), note };
   });
 
   const geo = geocode.data;

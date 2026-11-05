@@ -100,6 +100,35 @@ describe("source parsers (recorded answers for 428 El Rio Rd)", () => {
     });
   });
 
+  it("keeps a Census match in the city or ZIP that was asked for", () => {
+    expect(parseCensusGeocode(fixture("census-geocode"), ADDRESS).zip).toBe("94526");
+    // The postal city may differ from the city the architect wrote: the ZIP alone is enough.
+    expect(parseCensusGeocode(fixture("census-geocode"), "428 El Rio Rd, Alamo, CA 94526").zip).toBe("94526");
+    // No city or ZIP to check against: the first match stands.
+    expect(parseCensusGeocode(fixture("census-geocode"), "428 El Rio Rd").zip).toBe("94526");
+  });
+
+  it("refuses a Census match in another city and ZIP", () => {
+    // The live Census answer for "456 Oak Ave, San Ramon, CA 94583" (2026-11-05): one fuzzy match 400 miles away.
+    const ramona = {
+      result: {
+        addressMatches: [
+          {
+            matchedAddress: "456 OAK ST, RAMONA, CA, 92065",
+            coordinates: { x: -116.867034, y: 33.050653 },
+            addressComponents: { zip: "92065", city: "RAMONA", state: "CA", streetName: "OAK", suffixType: "ST" },
+          },
+        ],
+      },
+    };
+    expect(() => parseCensusGeocode(ramona, "456 Oak Ave, San Ramon, CA 94583")).toThrow(SourceError);
+    expect(() => parseCensusGeocode(ramona, "456 Oak Ave, San Ramon, CA 94583")).toThrow(/456 OAK ST, RAMONA/);
+    // A later match in the right place is taken over the first one.
+    const danville = (fixture("census-geocode") as { result: { addressMatches: unknown[] } }).result.addressMatches;
+    const both = { result: { addressMatches: [...ramona.result.addressMatches, ...danville] } };
+    expect(parseCensusGeocode(both, ADDRESS).city).toBe("DANVILLE");
+  });
+
   it("reads the Google geocoding answer", () => {
     const g = parseGoogleGeocode(fixture("google-geocode"));
     expect(g).toMatchObject({ lat: SITE.lat, lng: SITE.lng, accuracy: "ROOFTOP", street: "El Rio Rd", county: "Contra Costa County", provider: "google" });
