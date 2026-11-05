@@ -941,6 +941,12 @@ function ChatSession(props: {
                 }}
               />
             ))}
+            {busy && !list.some((m) => m.streaming) && (
+              <li>
+                <p className="text-xs font-medium text-muted">{ASSISTANT_NAME}</p>
+                <Working label="Thinking…" />
+              </li>
+            )}
           </ol>
         </div>
         {failure && <ErrorLine message={failure} />}
@@ -1100,7 +1106,8 @@ function MessageItem(props: { message: Message; open: boolean; onOpen: (artifact
       <p className="text-xs font-medium text-muted">
         {mine ? message.author : ASSISTANT_NAME} · {timeLabel(message.createdAt)}
       </p>
-      <p className="mt-1 whitespace-pre-line">{message.text}</p>
+      {message.text && <p className="mt-1 whitespace-pre-line">{message.text}</p>}
+      {message.streaming && <Working label={message.text ? "Writing…" : "Thinking…"} />}
       {message.sources && message.sources.length > 0 && (
         <ul aria-label="Attached documents" className="mt-2 flex flex-wrap gap-1">
           {message.sources.map((src) => (
@@ -1123,6 +1130,16 @@ function MessageItem(props: { message: Message; open: boolean; onOpen: (artifact
         </button>
       )}
     </li>
+  );
+}
+
+/** The assistant is still working on its reply. */
+function Working(props: { label: string }) {
+  return (
+    <p role="status" className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted">
+      <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" strokeWidth={1.5} />
+      {props.label}
+    </p>
   );
 }
 
