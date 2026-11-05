@@ -305,7 +305,7 @@ describe("site report pipeline", () => {
 
   it("marks only the failing sources as failed; the rest of the report still comes back", async () => {
     const fake = fakeFetch({ fail: { "hazards.fema.gov": 500, fhsz24_5: 0, "solar.googleapis.com": 403 }, parcelPointHit: true });
-    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: fake.fetch, now: NOW });
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: fake.fetch, now: NOW, retryDelayMs: 0 });
     const s = report.steps;
     expect(s.flood).toMatchObject({ status: "failed", error: "The source answered with HTTP 500." });
     expect(s.flood.sources[0]?.name).toBe("FEMA National Flood Hazard Layer");
@@ -415,7 +415,7 @@ describe("site report for the chat assistant", () => {
   });
 
   it("names the failed steps and says when there is no report", async () => {
-    const report = await buildSiteReport(ADDRESS, { fetch: fakeFetch({ fail: { "hazards.fema.gov": 500 } }).fetch, now: NOW });
+    const report = await buildSiteReport(ADDRESS, { fetch: fakeFetch({ fail: { "hazards.fema.gov": 500 } }).fetch, now: NOW, retryDelayMs: 0 });
     const text = siteReportText(report);
     expect(text).toContain("FEMA flood zone: FAILED (The source answered with HTTP 500.)");
     expect(text).toMatch(/Failed steps: .*FEMA flood zone/);
@@ -508,6 +508,18 @@ describe("slow and flaky sources", () => {
     const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: flaky, now: NOW, retryDelayMs: 0 });
     expect(report.steps.elevation).toMatchObject({ status: "ok", data: { feet: 417.9 } });
     expect(usgsCalls).toBe(2);
+  });
+
+  it("the flood step survives two dropped FEMA connections", async () => {
+    const fake = fakeFetch();
+    let femaCalls = 0;
+    const flaky: Fetch = async (input, init) => {
+      if (String(input).includes("hazards.fema.gov") && femaCalls++ < 2) throw new TypeError("fetch failed");
+      return fake.fetch(input, init);
+    };
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: flaky, now: NOW, retryDelayMs: 0 });
+    expect(report.steps.flood.status).toBe("ok");
+    expect(femaCalls).toBe(3);
   });
 
   // The live Google answer for 428 El Rio Rd (2026-11-05): 126.05 m.

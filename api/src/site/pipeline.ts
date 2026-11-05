@@ -83,6 +83,12 @@ type Get = (name: string, url: string, opts?: GetOptions) => Promise<unknown | n
  */
 const ELEVATION_HTTP: GetOptions = { timeoutMs: 25_000, retries: 1 };
 
+/**
+ * The FEMA flood layer drops a share of connections right after the TLS handshake (about 3 in
+ * 10 on 2026-11-05: ECONNRESET), so it gets two more tries.
+ */
+const FEMA_HTTP: GetOptions = { retries: 2 };
+
 /** A source message without its full stop, to quote inside another sentence. */
 const bare = (message: string) => message.replace(/\.$/, "");
 type Cite = (name: string, url: string) => void;
@@ -214,7 +220,7 @@ export async function buildSiteReport(address: string, options: PipelineOptions 
   });
 
   const flood = step<FloodZone>(async (get) => {
-    const z = parseFlood(await get("FEMA National Flood Hazard Layer", floodUrl(at)));
+    const z = parseFlood(await get("FEMA National Flood Hazard Layer", floodUrl(at), FEMA_HTTP));
     return z ? { status: "ok", data: z } : { status: "unknown", note: "No FEMA flood map covers this point." };
   }, `${FEMA_CHECK}?${new URLSearchParams({ AddressQuery: geo.formattedAddress || address })}`);
 
