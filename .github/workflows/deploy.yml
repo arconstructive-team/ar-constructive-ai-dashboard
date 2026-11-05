@@ -51,7 +51,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Deploy to Firebase Hosting
-        run: npx --yes firebase-tools@13.29.1 deploy --only hosting --project arconstructive --non-interactive
+        run: npx --yes firebase-tools@13.29.1 deploy --only hosting,firestore:rules --project arconstructive --non-interactive
 
   # The API (permit check and team chat assistant) on Cloud Run. The Anthropic key goes from
   # Secret Manager straight into the service; it is never in the repository or the web build.

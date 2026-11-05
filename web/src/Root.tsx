@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { App } from "./App";
 import { createFirestoreSource } from "./artifacts/firestoreSource";
-import { db } from "./auth/firebase";
+import { auth, db } from "./auth/firebase";
 import { useSignedInUser } from "./auth/user";
+import { CHAT_API_URL, createChatApi } from "./lib/chatApi";
 import { CODE_CYCLE } from "./lib/project";
 import { Assistant } from "./workspace/assistant";
 import { createFirestoreStore } from "./workspace/firestoreStore";
@@ -22,7 +23,22 @@ export function Root({ store: injected }: { store?: WorkspaceStore } = {}) {
   const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
   const user = useSignedInUser();
   const store = useMemo(() => injected ?? (db ? createFirestoreStore(db) : null), [injected]);
-  const assistant = useMemo(() => (store ? new Assistant({ store }) : null), [store]);
+  // Claude answers the chat through the chat API on Cloud Run, with the signed-in user's ID token.
+  const chat = useMemo(
+    () =>
+      !injected && auth && CHAT_API_URL
+        ? createChatApi({
+            baseUrl: CHAT_API_URL,
+            getIdToken: async () => {
+              const current = auth?.currentUser;
+              if (!current) throw new Error("Sign in again to use the assistant.");
+              return current.getIdToken();
+            },
+          })
+        : undefined,
+    [injected],
+  );
+  const assistant = useMemo(() => (store ? new Assistant({ store, chat }) : null), [store, chat]);
   // The artifact canvas reads the same Firestore documents the assistant writes.
   const canvas = useMemo(() => (!injected && db ? createFirestoreSource(db) : undefined), [injected]);
 
