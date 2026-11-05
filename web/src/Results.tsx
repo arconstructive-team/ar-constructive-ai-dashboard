@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { RULE_FAMILIES } from "./lib/project";
 import { RULE_FAMILY_ORDER, groupBySheet, toCsv, type CheckResult, type Severity } from "./lib/engine";
+import { CodeSections } from "./CodeSections";
 import { RegeneratedSheets, type RenderPage } from "./Regenerated";
 
 const focusRing =
@@ -15,11 +16,43 @@ const SEVERITY_STYLE: Record<Severity, string> = {
 
 const FAMILY_NAME = Object.fromEntries(RULE_FAMILIES.map((f) => [f.code, f.name])) as Record<string, string>;
 
+/** Warns when the set names another jurisdiction than the one the user selected. */
+function JurisdictionWarning(props: { result: CheckResult; onRecheck?: (jurisdiction: string) => void }) {
+  const check = props.result.jurisdiction;
+  if (!check || check.matches || !check.detected) return null;
+  const detected = check.detected;
+  return (
+    <div role="alert" className="flex items-start gap-3 border-l-4 border-danger bg-surface p-4">
+      <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-danger" strokeWidth={1.5} />
+      <div className="grid gap-2">
+        <p className="font-semibold">
+          This set is for {detected}, but you checked it as {check.selected}.
+        </p>
+        <p className="text-sm text-muted">
+          {check.sheet ? `Sheet ${check.sheet}` : "The set"} says: <span className="break-words">“{check.evidence}”</span>.
+          The rules and code sections below are for {check.selected}.
+        </p>
+        {props.onRecheck && (
+          <button
+            type="button"
+            onClick={() => props.onRecheck?.(detected)}
+            className={`inline-flex h-11 w-fit items-center justify-center rounded-control bg-accent px-6 text-[15px] font-semibold text-on-accent ${focusRing}`}
+          >
+            Check again as {detected}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Results(props: {
   result: CheckResult;
   file?: File | null;
   fileName: string;
   onReset: () => void;
+  /** Checks the same set again as another jurisdiction. */
+  onRecheck?: (jurisdiction: string) => void;
   renderPage?: RenderPage;
 }) {
   const { result, fileName } = props;
@@ -62,6 +95,8 @@ export function Results(props: {
           </button>
         </div>
       </div>
+
+      <JurisdictionWarning result={result} onRecheck={props.onRecheck} />
 
       <ul aria-label="Issues per rule family" className="flex flex-wrap gap-2">
         {RULE_FAMILY_ORDER.map((family) => (
@@ -122,6 +157,7 @@ export function Results(props: {
                       <span className="font-medium">Suggested fix: </span>
                       {f.suggested_fix}
                     </p>
+                    <CodeSections citations={f.citations ?? []} />
                   </li>
                 ))}
               </ul>

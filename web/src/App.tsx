@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 import { AlertCircle, FileText, Loader2, Upload } from "lucide-react";
 import {
   ADU_TYPES,
@@ -17,6 +17,7 @@ import {
 import { checkPermitSet, type CheckSet } from "./lib/check";
 import type { CheckResult } from "./lib/engine";
 import { Results } from "./Results";
+import { Library } from "./Library";
 
 type FileState =
   | { kind: "empty" }
@@ -37,6 +38,12 @@ interface Submission {
 
 const EMPTY_PROJECT: ProjectData = { address: "", jurisdiction: "", aduType: "No ADU" };
 
+type View = "check" | "library";
+
+function viewFromHash(): View {
+  return typeof window !== "undefined" && window.location.hash.startsWith("#/library") ? "library" : "check";
+}
+
 const focusRing =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const inputBase =
@@ -48,8 +55,15 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
   const [errors, setErrors] = useState<ProjectErrors>({});
   const [fileState, setFileState] = useState<FileState>({ kind: "empty" });
   const [submission, setSubmission] = useState<Submission | null>(null);
+  const [view, setView] = useState<View>(viewFromHash);
   const readId = useRef(0);
   const checkId = useRef(0);
+
+  useEffect(() => {
+    const onHash = () => setView(viewFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   async function runCheck(data: ProjectData, file: File) {
     const id = ++checkId.current;
@@ -102,6 +116,19 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
     void runCheck(project, fileState.file);
   }
 
+  /** Checks the same set again as the jurisdiction the set names. */
+  function recheck(jurisdiction: string) {
+    if (!submission || !(JURISDICTIONS as readonly string[]).includes(jurisdiction)) return;
+    const data = { ...submission.project, jurisdiction: jurisdiction as Jurisdiction };
+    setProject(data);
+    void runCheck(data, submission.file);
+  }
+
+  function go(next: View) {
+    setView(next);
+    if (typeof window !== "undefined") window.location.hash = next === "library" ? "#/library" : "#/";
+  }
+
   function reset() {
     readId.current++;
     checkId.current++;
@@ -114,12 +141,40 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
   return (
     <div className="min-h-screen bg-bg text-ink">
       <header className="border-b border-border">
-        <div className="mx-auto flex h-14 max-w-[1200px] items-center justify-between gap-4 px-4 md:px-8">
+        <div className="mx-auto flex min-h-14 max-w-[1200px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 md:px-8">
           <span className="font-display text-lg font-semibold">arconstructive</span>
-          <span className="text-sm text-muted">Permit-set check · {CODE_CYCLE} California codes</span>
+          <nav aria-label="Main" className="flex items-center gap-1">
+            {(
+              [
+                ["check", "New check", "#/"],
+                ["library", "Code library", "#/library"],
+              ] as const
+            ).map(([key, label, href]) => (
+              <a
+                key={key}
+                href={href}
+                aria-current={view === key ? "page" : undefined}
+                onClick={(e) => {
+                  e.preventDefault();
+                  go(key);
+                }}
+                className={`inline-flex h-11 items-center px-3 text-sm font-medium ${
+                  view === key ? "text-ink underline decoration-accent decoration-2 underline-offset-8" : "text-muted"
+                } ${focusRing}`}
+              >
+                {label}
+              </a>
+            ))}
+          </nav>
+          <span className="hidden text-sm text-muted md:inline">Permit-set check · {CODE_CYCLE} California codes</span>
         </div>
       </header>
 
+      {view === "library" ? (
+        <main className="mx-auto max-w-[1200px] px-4 py-12 md:px-8 md:py-16">
+          <Library />
+        </main>
+      ) : (
       <main className="mx-auto max-w-[1200px] px-4 py-12 md:px-8 md:py-16">
         <p className="text-xs font-medium text-muted">New check</p>
         <h1 className="mt-2 max-w-[680px] font-display text-[32px] font-semibold leading-[1.1] md:text-[40px]">
@@ -139,6 +194,7 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
                 file={submission.file}
                 fileName={submission.file.name}
                 onReset={reset}
+                onRecheck={recheck}
               />
             ) : (
               <SubmissionSummary
@@ -247,6 +303,7 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
           </aside>
         </div>
       </main>
+      )}
     </div>
   );
 }

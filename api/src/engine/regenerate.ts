@@ -15,6 +15,7 @@ import type {
 import { classifyPages } from "./classify";
 import { getPack } from "./packs";
 import { coverAreas } from "./rules";
+import { cite, getSection } from "./library";
 import { collapse, findFirst, formatNumber } from "./text";
 import { layoutSheet, layoutText, toBase64, writePdf } from "./pdf";
 
@@ -146,13 +147,30 @@ function agencyShort(pack: JurisdictionPack): string {
   return /\(([A-Z]+)\)/.exec(pack.fireAgency)?.[1] ?? pack.fireAgency.toUpperCase();
 }
 
-function localCode(pack: JurisdictionPack): string {
-  return (pack.localCodeNames[0] ?? `${pack.jurisdiction} municipal code`).toUpperCase();
+/**
+ * Records that a sheet cites a code library entry and returns the text that cites it.
+ * Every code reference on a regenerated sheet goes through this, so each one has a library id.
+ */
+type Cite = (id: string, text: string) => string;
+
+function citer(): { c: Cite; ids: string[] } {
+  const ids: string[] = [];
+  const c: Cite = (id, text) => {
+    getSection(id); // throws when the library has no such entry
+    if (!ids.includes(id)) ids.push(id);
+    return text;
+  };
+  return { c, ids };
+}
+
+function localCode(pack: JurisdictionPack, c: Cite): string {
+  const id = pack.local.code;
+  return id ? c(id, getSection(id).label.toUpperCase()) : `${pack.jurisdiction} municipal code`.toUpperCase();
 }
 
 // ---------------------------------------------------------------- sheet content
 
-function coverSections(f: ProjectFacts, pack: JurisdictionPack, address: string, aduType: string): SheetSection[] {
+function coverSections(f: ProjectFacts, pack: JurisdictionPack, address: string, aduType: string, c: Cite): SheetSection[] {
   const y = pack.codeCycle;
   const town = pack.jurisdiction.toUpperCase();
   const or = (v: string | null) => v ?? TBC;
@@ -193,24 +211,24 @@ function coverSections(f: ProjectFacts, pack: JurisdictionPack, address: string,
       heading: "APPLICABLE CODES",
       lines: [
         `ALL WORK SHALL COMPLY WITH THE FOLLOWING CODES, AS ADOPTED AND AMENDED BY THE ${town}:`,
-        `${y} CALIFORNIA BUILDING CODE (CBC), TITLE 24 PART 2`,
-        `${y} CALIFORNIA RESIDENTIAL CODE (CRC), TITLE 24 PART 2.5`,
-        `${y} CALIFORNIA ELECTRICAL CODE (CEC), TITLE 24 PART 3`,
-        `${y} CALIFORNIA MECHANICAL CODE (CMC), TITLE 24 PART 4`,
-        `${y} CALIFORNIA PLUMBING CODE (CPC), TITLE 24 PART 5`,
-        `${y} CALIFORNIA ENERGY CODE, TITLE 24 PART 6`,
-        `${y} CALIFORNIA WILDLAND-URBAN INTERFACE CODE (CWUIC), TITLE 24 PART 7`,
-        `${y} CALIFORNIA FIRE CODE (CFC), TITLE 24 PART 9, AS AMENDED BY ${agencyShort(pack)}`,
-        `${y} CALIFORNIA EXISTING BUILDING CODE (CEBC), TITLE 24 PART 10`,
-        `${y} CALIFORNIA GREEN BUILDING STANDARDS CODE (CALGREEN), TITLE 24 PART 11`,
-        localCode(pack),
+        c("T24-P2", `${y} CALIFORNIA BUILDING CODE (CBC), TITLE 24 PART 2`),
+        c("T24-P2.5", `${y} CALIFORNIA RESIDENTIAL CODE (CRC), TITLE 24 PART 2.5`),
+        c("T24-P3", `${y} CALIFORNIA ELECTRICAL CODE (CEC), TITLE 24 PART 3`),
+        c("T24-P4", `${y} CALIFORNIA MECHANICAL CODE (CMC), TITLE 24 PART 4`),
+        c("T24-P5", `${y} CALIFORNIA PLUMBING CODE (CPC), TITLE 24 PART 5`),
+        c("T24-P6", `${y} CALIFORNIA ENERGY CODE, TITLE 24 PART 6`),
+        c("T24-P7", `${y} CALIFORNIA WILDLAND-URBAN INTERFACE CODE (CWUIC), TITLE 24 PART 7`),
+        c("T24-P9", `${y} CALIFORNIA FIRE CODE (CFC), TITLE 24 PART 9, AS AMENDED BY ${agencyShort(pack)}`),
+        c("T24-P10", `${y} CALIFORNIA EXISTING BUILDING CODE (CEBC), TITLE 24 PART 10`),
+        c("T24-P11", `${y} CALIFORNIA GREEN BUILDING STANDARDS CODE (CALGREEN), TITLE 24 PART 11`),
+        localCode(pack, c),
       ],
     },
     { heading: "SCOPE OF WORK", lines: [f.scope ?? TBC] },
   ];
 }
 
-function generalSections(pack: JurisdictionPack): SheetSection[] {
+function generalSections(pack: JurisdictionPack, c: Cite): SheetSection[] {
   const y = pack.codeCycle;
   const town = pack.jurisdiction.toUpperCase();
   const fire = agencyShort(pack);
@@ -244,15 +262,15 @@ function generalSections(pack: JurisdictionPack): SheetSection[] {
     {
       heading: "GENERAL NOTES",
       lines: [
-        `1. ALL WORK SHALL CONFORM TO THE ${y} CALIFORNIA BUILDING STANDARDS CODE (TITLE 24) AS ADOPTED AND AMENDED BY THE ${town}, AND TO THE ${localCode(pack)}.`,
+        `1. ALL WORK SHALL CONFORM TO THE ${c("T24-2025", `${y} CALIFORNIA BUILDING STANDARDS CODE (TITLE 24)`)} AS ADOPTED AND AMENDED BY THE ${town}, AND TO THE ${localCode(pack, c)}.`,
         "2. THE CONTRACTOR SHALL VERIFY ALL DIMENSIONS AND EXISTING CONDITIONS ON SITE BEFORE STARTING WORK, AND SHALL REPORT ANY DIFFERENCE TO THE ARCHITECT.",
         "3. DO NOT SCALE THE DRAWINGS. WRITTEN DIMENSIONS GOVERN.",
         "4. KEEP THE APPROVED PLANS AND THE PERMIT CARD ON SITE AND AVAILABLE TO THE INSPECTOR.",
         `5. ANY CHANGE TO THE APPROVED PLANS NEEDS THE APPROVAL OF THE ${town} BUILDING DIVISION BEFORE THE WORK IS DONE.`,
-        `6. CONSTRUCTION HOURS, NOISE AND DUST CONTROL SHALL FOLLOW THE ${localCode(pack)} AND THE CONDITIONS OF APPROVAL.`,
-        `7. SPECIAL INSPECTIONS, WHERE THE STRUCTURAL DRAWINGS CALL FOR THEM, SHALL FOLLOW ${y} CBC CHAPTER 17.`,
-        `8. FIRE AND LIFE SAFETY WORK SHALL MEET THE ${y} CALIFORNIA FIRE CODE AS AMENDED BY THE ${pack.fireAgency.toUpperCase()}.`,
-        `9. NEW CONSTRUCTION SHALL MEET THE MANDATORY MEASURES OF THE ${y} CALIFORNIA GREEN BUILDING STANDARDS CODE (CALGREEN) AND THE ${y} CALIFORNIA ENERGY CODE.`,
+        `6. CONSTRUCTION HOURS, NOISE AND DUST CONTROL SHALL FOLLOW THE ${localCode(pack, c)} AND THE CONDITIONS OF APPROVAL.`,
+        `7. SPECIAL INSPECTIONS, WHERE THE STRUCTURAL DRAWINGS CALL FOR THEM, SHALL FOLLOW ${c("CBC-CH17", `${y} CBC CHAPTER 17`)}.`,
+        `8. FIRE AND LIFE SAFETY WORK SHALL MEET THE ${c("T24-P9", `${y} CALIFORNIA FIRE CODE`)} AS AMENDED BY THE ${pack.fireAgency.toUpperCase()}.`,
+        `9. NEW CONSTRUCTION SHALL MEET THE MANDATORY MEASURES OF THE ${c("T24-P11", `${y} CALIFORNIA GREEN BUILDING STANDARDS CODE (CALGREEN)`)} AND THE ${c("T24-P6", `${y} CALIFORNIA ENERGY CODE`)}.`,
         "10. PROTECT THE EXISTING BUILDING, TREES AND UTILITIES THAT STAY. REPAIR ANY DAMAGE THE WORK CAUSES.",
         "11. PROVIDE EROSION AND SEDIMENT CONTROL AND KEEP CONSTRUCTION DEBRIS OUT OF THE STORM DRAIN SYSTEM.",
       ],
@@ -260,87 +278,89 @@ function generalSections(pack: JurisdictionPack): SheetSection[] {
   ];
 }
 
-function empSections(pack: JurisdictionPack): SheetSection[] {
+function empSections(pack: JurisdictionPack, c: Cite): SheetSection[] {
   const y = pack.codeCycle;
+  const energy = () => c("ENERGY-150.0(o)", `${y} CALIFORNIA ENERGY CODE`);
   return [
     {
       heading: "GENERAL NOTE (1) - ELECTRICAL",
       lines: [
-        `1. ALL ELECTRICAL WORK SHALL COMPLY WITH THE ${y} CALIFORNIA ELECTRICAL CODE (CEC).`,
-        "2. PROVIDE TAMPER-RESISTANT RECEPTACLES IN ALL DWELLING AREAS, PER CEC SECTION 406.12.",
-        "3. PROVIDE GFCI PROTECTION PER CEC SECTION 210.8 AND AFCI PROTECTION PER CEC SECTION 210.12.",
-        `4. LIGHTING SHALL BE HIGH EFFICACY WITH CONTROLS AS REQUIRED BY THE ${y} CALIFORNIA ENERGY CODE.`,
+        `1. ALL ELECTRICAL WORK SHALL COMPLY WITH THE ${c("T24-P3", `${y} CALIFORNIA ELECTRICAL CODE (CEC)`)}.`,
+        `2. PROVIDE TAMPER-RESISTANT RECEPTACLES IN ALL DWELLING AREAS, PER ${c("CEC-406.12", "CEC SECTION 406.12")}.`,
+        `3. PROVIDE GFCI PROTECTION PER ${c("CEC-210.8", "CEC SECTION 210.8")} AND AFCI PROTECTION PER ${c("CEC-210.12", "CEC SECTION 210.12")}.`,
+        `4. LIGHTING SHALL BE HIGH EFFICACY WITH CONTROLS AS REQUIRED BY THE ${c("ENERGY-150.0(k)", `${y} CALIFORNIA ENERGY CODE`)}.`,
         "5. THE ADU SHALL HAVE ITS OWN LABELED PANEL OR CIRCUITS, AS SHOWN ON THE ELECTRICAL PLAN.",
       ],
     },
     {
       heading: "GENERAL NOTE (1) - MECHANICAL",
       lines: [
-        `1. ALL MECHANICAL WORK SHALL COMPLY WITH THE ${y} CALIFORNIA MECHANICAL CODE (CMC) AND THE ${y} CALIFORNIA ENERGY CODE.`,
-        "2. BATHROOM EXHAUST FANS SHALL BE ENERGY STAR, DUCTED TO THE OUTSIDE AND CONTROLLED BY A HUMIDITY CONTROL, PER CALGREEN SECTION 4.506.1.",
-        `3. PROVIDE WHOLE-DWELLING MECHANICAL VENTILATION AND A KITCHEN RANGE HOOD AS REQUIRED BY THE ${y} CALIFORNIA ENERGY CODE.`,
-        "4. CLOTHES DRYER EXHAUST SHALL BE DUCTED TO THE OUTSIDE WITH A BACKDRAFT DAMPER, PER CMC SECTION 504.4.",
-        "5. SEAL DUCT AND EQUIPMENT OPENINGS DURING CONSTRUCTION, PER CALGREEN SECTION 4.504.1.",
+        `1. ALL MECHANICAL WORK SHALL COMPLY WITH THE ${c("T24-P4", `${y} CALIFORNIA MECHANICAL CODE (CMC)`)} AND THE ${c("T24-P6", `${y} CALIFORNIA ENERGY CODE`)}.`,
+        `2. BATHROOM EXHAUST FANS SHALL BE ENERGY STAR, DUCTED TO THE OUTSIDE AND CONTROLLED BY A HUMIDITY CONTROL, PER ${c("CALGREEN-4.506.1", "CALGREEN SECTION 4.506.1")}.`,
+        `3. PROVIDE WHOLE-DWELLING MECHANICAL VENTILATION AND A KITCHEN RANGE HOOD AS REQUIRED BY THE ${energy()}.`,
+        `4. CLOTHES DRYER EXHAUST SHALL BE DUCTED TO THE OUTSIDE WITH A BACKDRAFT DAMPER, PER ${c("CMC-504.4", "CMC SECTION 504.4")}.`,
+        `5. SEAL DUCT AND EQUIPMENT OPENINGS DURING CONSTRUCTION, PER ${c("CALGREEN-4.504.1", "CALGREEN SECTION 4.504.1")}.`,
       ],
     },
     {
       heading: "GENERAL NOTE (1) - PLUMBING AND WATER CONSERVATION",
       lines: [
-        `1. ALL PLUMBING WORK SHALL COMPLY WITH THE ${y} CALIFORNIA PLUMBING CODE (CPC).`,
-        "2. NEW PLUMBING FIXTURES SHALL NOT EXCEED THE FLOW RATES OF CALGREEN SECTION 4.303: WATER CLOSETS 1.28 GALLONS PER FLUSH, LAVATORY FAUCETS 1.2 GPM, KITCHEN FAUCETS 1.8 GPM, SHOWERHEADS 1.8 GPM.",
-        "3. SHOWER AND TUB-SHOWER VALVES SHALL BE PRESSURE BALANCE OR THERMOSTATIC MIXING TYPE, PER CPC SECTION 408.3.",
-        "4. STRAP THE WATER HEATER FOR SEISMIC FORCES IN THE UPPER AND LOWER THIRD OF ITS HEIGHT, PER CPC SECTION 507.2.",
+        `1. ALL PLUMBING WORK SHALL COMPLY WITH THE ${c("T24-P5", `${y} CALIFORNIA PLUMBING CODE (CPC)`)}.`,
+        `2. NEW PLUMBING FIXTURES SHALL NOT EXCEED THE FLOW RATES OF ${c("CALGREEN-4.303.1", "CALGREEN SECTION 4.303.1")}: WATER CLOSETS 1.28 GALLONS PER FLUSH, LAVATORY FAUCETS 1.2 GPM, KITCHEN FAUCETS 1.8 GPM, SHOWERHEADS 1.8 GPM.`,
+        `3. SHOWER AND TUB-SHOWER VALVES SHALL BE PRESSURE BALANCE OR THERMOSTATIC MIXING TYPE, PER ${c("CPC-408.3", "CPC SECTION 408.3")}.`,
+        `4. STRAP THE WATER HEATER FOR SEISMIC FORCES IN THE UPPER AND LOWER THIRD OF ITS HEIGHT, PER ${c("CPC-507.2", "CPC SECTION 507.2")}.`,
       ],
     },
     {
       heading: "GENERAL NOTE (1) - CALGREEN",
       lines: [
-        "1. RECYCLE OR SALVAGE AT LEAST 65 PERCENT OF THE NONHAZARDOUS CONSTRUCTION AND DEMOLITION WASTE, PER CALGREEN SECTION 4.408.1.",
-        "2. ADHESIVES, SEALANTS, PAINTS AND COATINGS SHALL MEET THE VOC LIMITS OF CALGREEN SECTION 4.504.",
-        "3. CHECK THE MOISTURE CONTENT OF FRAMING BEFORE ENCLOSURE, PER CALGREEN SECTION 4.505.3.",
-        "4. GIVE THE OWNER AN OPERATION AND MAINTENANCE MANUAL AT FINAL INSPECTION, PER CALGREEN SECTION 4.410.1.",
+        `1. RECYCLE OR SALVAGE AT LEAST 65 PERCENT OF THE NONHAZARDOUS CONSTRUCTION AND DEMOLITION WASTE, PER ${c("CALGREEN-4.408.1", "CALGREEN SECTION 4.408.1")}.`,
+        `2. ADHESIVES, SEALANTS, PAINTS AND COATINGS SHALL MEET THE VOC LIMITS OF ${c("CALGREEN-4.504.2", "CALGREEN SECTION 4.504.2")}.`,
+        `3. CHECK THE MOISTURE CONTENT OF FRAMING BEFORE ENCLOSURE, PER ${c("CALGREEN-4.505.3", "CALGREEN SECTION 4.505.3")}.`,
+        `4. GIVE THE OWNER AN OPERATION AND MAINTENANCE MANUAL AT FINAL INSPECTION, PER ${c("CALGREEN-4.410.1", "CALGREEN SECTION 4.410.1")}.`,
       ],
     },
   ];
 }
 
-function fireSections(f: ProjectFacts, pack: JurisdictionPack): SheetSection[] {
+function fireSections(f: ProjectFacts, pack: JurisdictionPack, c: Cite): SheetSection[] {
   const y = pack.codeCycle;
   const agency = pack.fireAgency.toUpperCase();
   const short = agencyShort(pack);
+  const wui = (text: string) => c("T24-P7", text);
   const zone =
     f.fireZone === "YES"
-      ? `THE PROJECT DATA STATES THAT THE SITE IS IN A FIRE HAZARD SEVERITY ZONE. EXTERIOR WALLS, ROOF, VENTS, WINDOWS AND DECKS SHALL COMPLY WITH THE ${y} CALIFORNIA WILDLAND-URBAN INTERFACE CODE (CWUIC).`
+      ? `THE PROJECT DATA STATES THAT THE SITE IS IN A FIRE HAZARD SEVERITY ZONE. EXTERIOR WALLS, ROOF, VENTS, WINDOWS AND DECKS SHALL COMPLY WITH THE ${wui(`${y} CALIFORNIA WILDLAND-URBAN INTERFACE CODE (CWUIC)`)}.`
       : f.fireZone === "NO"
-        ? `THE PROJECT DATA STATES THAT THE SITE IS NOT IN A FIRE HAZARD SEVERITY ZONE, SO NO WILDFIRE CONSTRUCTION MEASURES ARE SHOWN. IF ${short} OR THE STATE MAPS THE PARCEL IN A ZONE, ADD THE ${y} CWUIC MEASURES BEFORE THE PERMIT IS ISSUED.`
-        : `CONFIRM THE FIRE HAZARD SEVERITY ZONE OF THE PARCEL. IF THE PARCEL IS IN A ZONE, ADD THE ${y} CWUIC MEASURES BEFORE THE PERMIT IS ISSUED.`;
+        ? `THE PROJECT DATA STATES THAT THE SITE IS NOT IN A FIRE HAZARD SEVERITY ZONE, SO NO WILDFIRE CONSTRUCTION MEASURES ARE SHOWN. IF ${short} OR THE STATE MAPS THE PARCEL IN A ZONE, ADD THE ${wui(`${y} CWUIC`)} MEASURES BEFORE THE PERMIT IS ISSUED.`
+        : `CONFIRM THE FIRE HAZARD SEVERITY ZONE OF THE PARCEL. IF THE PARCEL IS IN A ZONE, ADD THE ${wui(`${y} CWUIC`)} MEASURES BEFORE THE PERMIT IS ISSUED.`;
   return [
     {
       heading: "GENERAL NOTE (2) - FIRE",
       lines: [
-        `1. ALL WORK SHALL COMPLY WITH THE ${y} CALIFORNIA FIRE CODE (CFC) AS AMENDED BY THE ${agency}, AND WITH ${short} STANDARDS.`,
+        `1. ALL WORK SHALL COMPLY WITH THE ${c("T24-P9", `${y} CALIFORNIA FIRE CODE (CFC)`)} AS AMENDED BY THE ${agency}, AND WITH ${short} STANDARDS.`,
         `2. FIRE HAZARD SEVERITY ZONE: ${zone}`,
-        `3. FIRE SPRINKLERS: ${f.sprinklers && !/NONE|NO\b/.test(f.sprinklers) ? `${f.sprinklers}. ` : ""}AN ADU DOES NOT NEED FIRE SPRINKLERS WHEN THEY ARE NOT REQUIRED FOR THE PRIMARY RESIDENCE (CALIFORNIA GOVERNMENT CODE SECTION 66314). CONFIRM WITH ${short}.`,
+        `3. FIRE SPRINKLERS: ${f.sprinklers && !/NONE|NO\b/.test(f.sprinklers) ? `${f.sprinklers}. ` : ""}AN ADU DOES NOT NEED FIRE SPRINKLERS WHEN THEY ARE NOT REQUIRED FOR THE PRIMARY RESIDENCE (${c("GOV-66314", "CALIFORNIA GOVERNMENT CODE SECTION 66314")}). CONFIRM WITH ${short}.`,
       ],
     },
     {
       heading: "SMOKE AND CARBON MONOXIDE ALARMS",
       lines: [
-        `1. PROVIDE SMOKE ALARMS IN EACH SLEEPING ROOM, OUTSIDE EACH SLEEPING AREA AND ON EACH STORY OF THE DWELLING UNITS, PER ${y} CRC SECTION R314. ALARMS SHALL BE HARDWIRED WITH BATTERY BACKUP AND INTERCONNECTED.`,
-        `2. PROVIDE CARBON MONOXIDE ALARMS OUTSIDE EACH SLEEPING AREA AND ON EACH STORY, PER ${y} CRC SECTION R315.`,
+        `1. PROVIDE SMOKE ALARMS IN EACH SLEEPING ROOM, OUTSIDE EACH SLEEPING AREA AND ON EACH STORY OF THE DWELLING UNITS, PER ${c("CRC-R314", `${y} CRC SECTION R314`)}. ALARMS SHALL BE HARDWIRED WITH BATTERY BACKUP AND INTERCONNECTED.`,
+        `2. PROVIDE CARBON MONOXIDE ALARMS OUTSIDE EACH SLEEPING AREA AND ON EACH STORY, PER ${c("CRC-R315", `${y} CRC SECTION R315`)}.`,
       ],
     },
     {
       heading: "ADDRESS AND ACCESS",
       lines: [
-        `1. POST ADDRESS NUMBERS FOR THE MAIN HOUSE AND THE ADU, CLEARLY VISIBLE FROM THE STREET AND CONTRASTING WITH THEIR BACKGROUND, PER ${y} CFC SECTION 505.1 AND ${short} STANDARDS.`,
-        `2. FIRE ACCESS AND WATER SUPPLY SHALL MEET ${y} CFC CHAPTER 5 AS AMENDED BY ${short}.`,
+        `1. POST ADDRESS NUMBERS FOR THE MAIN HOUSE AND THE ADU, CLEARLY VISIBLE FROM THE STREET AND CONTRASTING WITH THEIR BACKGROUND, PER ${c("CFC-505.1", `${y} CFC SECTION 505.1`)} AND ${short} STANDARDS.`,
+        `2. FIRE ACCESS AND WATER SUPPLY SHALL MEET ${c("CFC-CH5", `${y} CFC CHAPTER 5`)} AS AMENDED BY ${short}.`,
       ],
     },
     {
       heading: "FIRE SAFETY DURING CONSTRUCTION",
       lines: [
-        `1. FIRE SAFETY DURING CONSTRUCTION SHALL COMPLY WITH ${y} CFC CHAPTER 33.`,
+        `1. FIRE SAFETY DURING CONSTRUCTION SHALL COMPLY WITH ${c("CFC-CH33", `${y} CFC CHAPTER 33`)}.`,
         "2. KEEP A PORTABLE FIRE EXTINGUISHER ON SITE DURING CONSTRUCTION.",
         "3. KEEP COMBUSTIBLE DEBRIS AWAY FROM THE BUILDING AND REMOVE IT FROM THE SITE OFTEN.",
       ],
@@ -383,13 +403,15 @@ export function regenerateSheets(input: PageText[], options: EngineOptions = {})
   for (const [label, v] of missing) if (!v) to_confirm.push(`The cover does not state the ${label}. Fill it in on A-0.1.`);
   if (!options.address && !facts.address) to_confirm.push("Enter the project address.");
   to_confirm.push("The areas are copied from the original cover. Fix any area finding on the plans and the cover together.");
-  to_confirm.push("Check the code section numbers against the adopted local amendments before the sheets are issued.");
+  to_confirm.push(
+    "Check the cited code sections against the adopted local amendments before the sheets are issued. Each sheet lists its sections, with links to the official source.",
+  );
 
-  const content: Record<string, SheetSection[]> = {
-    "A-0.1": coverSections(facts, pack, address, aduType),
-    "A-0.2": generalSections(pack),
-    "A-5.2": empSections(pack),
-    "A-5.3": fireSections(facts, pack),
+  const build: Record<string, (c: Cite) => SheetSection[]> = {
+    "A-0.1": (c) => coverSections(facts, pack, address, aduType, c),
+    "A-0.2": (c) => generalSections(pack, c),
+    "A-5.2": (c) => empSections(pack, c),
+    "A-5.3": (c) => fireSections(facts, pack, c),
   };
 
   const sheets: RegeneratedSheet[] = REGENERATED_SHEETS.map((id) => {
@@ -416,9 +438,11 @@ export function regenerateSheets(input: PageText[], options: EngineOptions = {})
       `${pack.codeCycle} CODE CYCLE`,
       pack.jurisdiction.toUpperCase(),
     ];
-    const sections = content[id];
+    const { c, ids } = citer();
+    const sections = build[id](c);
     const text = layoutText(layoutSheet({ titleBlock: title_block, sections }));
-    return { sheet: id, title, original_page: original?.page ?? null, date, job, address: addr, title_block, sections, text };
+    const citations = ids.map(cite);
+    return { sheet: id, title, original_page: original?.page ?? null, date, job, address: addr, title_block, sections, text, citations };
   });
 
   return { pack: pack.id, pack_name: pack.name, code_cycle: pack.codeCycle, address, sheets, to_confirm, findings: [] };

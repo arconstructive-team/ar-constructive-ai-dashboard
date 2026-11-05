@@ -1,5 +1,8 @@
 // Shared types of the permit-set check engine. The engine is pure TypeScript with no
 // dependencies, so the API server and the dashboard (in the browser) run the same code.
+import type { Citation } from "./library/types";
+
+export type { Citation, CodeLibraryData, CodePack, CodeSection } from "./library/types";
 
 export type RuleFamily = "JB" | "CD" | "CY" | "AR" | "XR" | "TB" | "DT" | "TP";
 export type Severity = "high" | "medium" | "low";
@@ -43,6 +46,8 @@ export interface Finding {
   pages: number[];
   evidence: string;
   suggested_fix: string;
+  /** The code sections behind the finding, from the code library. */
+  citations?: Citation[];
 }
 
 export interface MissingItem {
@@ -66,8 +71,37 @@ export interface JurisdictionPack {
   allowedJurisdictions: string[];
   allowedAgencies: string[];
   fireAgency: string;
-  /** Local code names that are correct for this jurisdiction (for reference in fixes). */
-  localCodeNames: string[];
+  /** The code library packs whose sections this pack cites (state first, then local). */
+  codePacks: string[];
+  /** The jurisdiction's own municipal code entries in the code library, by role. */
+  local: Partial<Record<LocalRole, string>>;
+}
+
+/** What a local code library entry is for, so rules and sheets can cite it by role. */
+export type LocalRole =
+  | "code"
+  | "building"
+  | "residential"
+  | "electrical"
+  | "fire"
+  | "green"
+  | "energy"
+  | "existing"
+  | "wui"
+  | "adu"
+  | "trees";
+
+/** The jurisdiction the set itself names, next to the one the user selected. */
+export interface JurisdictionCheck {
+  selected: string;
+  /** null when the set names no jurisdiction we know. */
+  detected: string | null;
+  /** The text that names it, e.g. "PROJECT DATA: 428 EL RIO RD, DANVILLE, 94526". */
+  evidence: string | null;
+  sheet: string | null;
+  page: number | null;
+  /** false when the set names another jurisdiction than the selected one. */
+  matches: boolean;
 }
 
 export interface EngineResult {
@@ -79,6 +113,7 @@ export interface EngineResult {
   findings: Finding[];
   missing: MissingItem[];
   counts: Record<RuleFamily, number>;
+  jurisdiction?: JurisdictionCheck;
 }
 
 /** One titled block of notes on a regenerated sheet. Each line is one paragraph. */
@@ -103,6 +138,8 @@ export interface RegeneratedSheet {
   sections: SheetSection[];
   /** The page text in reading order, as a PDF reader extracts it from the generated PDF. */
   text: string;
+  /** Every code library section the sheet cites, in the order it first cites them. */
+  citations?: Citation[];
 }
 
 export interface RegeneratedSet {
