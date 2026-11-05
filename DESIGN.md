@@ -45,6 +45,18 @@ Ink on canvas contrast: 17.1:1. Accent is for one primary action per screen; mos
 
 On phones, display is 40px and h1 32px. Body never below 16px; line length 60–75 characters.
 
+Artifact documents (the generated reports in the artifact canvas, and their PDF and Word exports) use a serif for their own titles and headings, so a deliverable reads as a document and not as app chrome. App UI never uses these.
+
+| Style | Size | Line height | Weight | Family |
+|---|---|---|---|---|
+| doc-title | 40px (32px on phones) | 1.15 | 600 | Source Serif 4 (`--font-document`) |
+| doc-h1 / h2 / h3 / h4 | 28 / 24 / 20 / 17px | 1.25 | 600 | Source Serif 4 |
+| doc-body | 16px | 1.65 | 400 | Schibsted Grotesk |
+| doc-table | 14px | 1.45 | 400 | Schibsted Grotesk |
+| mono | 0.875em | inherit | 400 | system monospace (`--font-mono`) |
+
+- Load: `family=Source+Serif+4:opsz,wght@8..60,400;8..60,600` in the same Google Fonts link.
+
 ## Spacing and layout
 
 - Base unit 4px; scale: 4px, 8px, 12px, 16px, 24px, 32px, 48px, 64px, 96px, 128px.
@@ -84,6 +96,7 @@ On phones, display is 40px and h1 32px. Body never below 16px; line length 60–
 
 - **Set drop zone:** a dashed 1px border box on canvas. States: empty (what to drop and the file rule), reading (spinner and a surface skeleton line), ready (file name and size, "Choose another file"), error (danger border, what went wrong and how to fix it).
 - **Rule family list:** two-letter code in a caption chip, then the plain-words description. A list with dividers, not cards.
+- **Artifact canvas:** the right-hand pane that shows a chat's deliverable. A 56px top bar (artifact title menu with its versions, Edit, Export) over a centred 760px document column on canvas. The header is the serif doc-title and chips (date, @author, kind, version). Inline code and table headers use the surface fill; tables have 1px border lines and scroll sideways on phones. States: loading (surface skeleton), generating (text appears live with an accent caret, a "Writing …" status line, and "Jump to latest" when the reader scrolls up; Edit and Export are off), ready, stopped (danger edge with what to do), empty (one line and the Edit action), old version (surface banner with "Restore this version"). Edit mode adds a sticky toolbar (text style, code, table, image, checklist, insert) and "Discard changes" / "Save version".
 
 ## Screens and states
 
