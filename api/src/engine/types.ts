@@ -81,6 +81,47 @@ export interface EngineResult {
   counts: Record<RuleFamily, number>;
 }
 
+/** One titled block of notes on a regenerated sheet. Each line is one paragraph. */
+export interface SheetSection {
+  heading: string;
+  lines: string[];
+}
+
+/** A sheet the engine wrote again from the project data and the jurisdiction pack. */
+export interface RegeneratedSheet {
+  sheet: string;
+  title: string;
+  /** The page of the original set that this sheet replaces, or null when the set has none. */
+  original_page: number | null;
+  /** Title-block date, mm/dd/yyyy. */
+  date: string;
+  job: string | null;
+  /** Title-block address lines; the first one starts with the street number. */
+  address: string[];
+  /** The title-block lines in print order (blank strings are spacers). */
+  title_block: string[];
+  sections: SheetSection[];
+  /** The page text in reading order, as a PDF reader extracts it from the generated PDF. */
+  text: string;
+}
+
+export interface RegeneratedSet {
+  pack: string;
+  pack_name: string;
+  code_cycle: number;
+  address: string;
+  sheets: RegeneratedSheet[];
+  /** What the architect must check or fill in before the sheets are issued. */
+  to_confirm: string[];
+  /** What the engine still finds when it checks the regenerated sheets on their own. */
+  findings: Finding[];
+}
+
+/** The engine result plus the regenerated sheets (null when the set has no architectural cover). */
+export interface CheckResult extends EngineResult {
+  regenerated?: RegeneratedSet | null;
+}
+
 export interface RuleContext {
   pages: ClassifiedPage[];
   index: string[];

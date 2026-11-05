@@ -1,5 +1,6 @@
-import type { EngineOptions, EngineResult, Finding, PageText, RuleContext, RuleFamily } from "./types";
+import type { CheckResult, EngineOptions, EngineResult, Finding, PageText, RuleContext, RuleFamily } from "./types";
 import { classifyPages } from "./classify";
+import { regenerateSheets } from "./regenerate";
 import { getPack } from "./packs";
 import { findFirst } from "./text";
 import {
@@ -18,6 +19,18 @@ export { classifyPages, parseSheetIndex, readTitleBlock } from "./classify";
 export { DANVILLE_2025, getPack } from "./packs";
 export { itemsToText } from "./text";
 export { coverAreas } from "./rules";
+export { REGENERATED_SHEETS, readProjectFacts, regenerateSheets, regeneratedPdf, regeneratedPdfDataUrl } from "./regenerate";
+export { layoutSheet, layoutText, writePdf, toBase64 } from "./pdf";
+
+/** Runs the check and regenerates the cover data and notes sheets for the same project. */
+export function runCheck(input: PageText[], options: EngineOptions = {}): CheckResult {
+  const regenerated = regenerateSheets(input, options);
+  if (regenerated) {
+    const pages = regenerated.sheets.map((s, i) => ({ page: i + 1, text: s.text }));
+    regenerated.findings = runEngine(pages, options).findings;
+  }
+  return { ...runEngine(input, options), regenerated };
+}
 
 export const RULE_FAMILY_ORDER: RuleFamily[] = ["JB", "CD", "CY", "AR", "XR", "TB", "DT", "TP"];
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 } as const;

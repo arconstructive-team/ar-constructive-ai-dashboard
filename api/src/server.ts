@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { runEngine, type EngineOptions, type PageText } from "./engine";
+import { runCheck, type EngineOptions, type PageText } from "./engine";
 
 /** The largest permit set the API accepts: 200 MB. */
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -111,7 +111,7 @@ export function createHandler(options: AppOptions = {}) {
     };
     try {
       const pages = await extract(data);
-      send(res, 200, runEngine(pages, engineOptions));
+      send(res, 200, runCheck(pages, engineOptions));
     } catch {
       send(res, 422, { error: "We could not read the text of this PDF. Check that it is not password-protected." });
     }

@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { RULE_FAMILIES } from "./lib/project";
-import { RULE_FAMILY_ORDER, groupBySheet, toCsv, type EngineResult, type Severity } from "./lib/engine";
+import { RULE_FAMILY_ORDER, groupBySheet, toCsv, type CheckResult, type Severity } from "./lib/engine";
+import { RegeneratedSheets, type RenderPage } from "./Regenerated";
 
 const focusRing =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
@@ -15,9 +16,11 @@ const SEVERITY_STYLE: Record<Severity, string> = {
 const FAMILY_NAME = Object.fromEntries(RULE_FAMILIES.map((f) => [f.code, f.name])) as Record<string, string>;
 
 export function Results(props: {
-  result: EngineResult;
+  result: CheckResult;
+  file?: File | null;
   fileName: string;
   onReset: () => void;
+  renderPage?: RenderPage;
 }) {
   const { result, fileName } = props;
   const groups = useMemo(() => groupBySheet(result.findings), [result.findings]);
@@ -146,6 +149,8 @@ export function Results(props: {
           </ul>
         </section>
       )}
+
+      <RegeneratedSheets result={result} file={props.file ?? null} fileName={fileName} renderPage={props.renderPage} />
 
       <details className="border-t border-border pt-4">
         <summary className={`cursor-pointer text-sm font-medium ${focusRing}`}>

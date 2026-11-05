@@ -15,7 +15,7 @@ import {
   type ProjectErrors,
 } from "./lib/project";
 import { checkPermitSet, type CheckSet } from "./lib/check";
-import type { EngineResult } from "./lib/engine";
+import type { CheckResult } from "./lib/engine";
 import { Results } from "./Results";
 
 type FileState =
@@ -26,7 +26,7 @@ type FileState =
 
 type CheckState =
   | { kind: "running" }
-  | { kind: "done"; result: EngineResult }
+  | { kind: "done"; result: CheckResult }
   | { kind: "error"; message: string };
 
 interface Submission {
@@ -134,7 +134,12 @@ export function App({ checkSet = checkPermitSet }: { checkSet?: CheckSet } = {})
         <div className="mt-12 grid gap-12 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-16">
           {submission ? (
             submission.check.kind === "done" ? (
-              <Results result={submission.check.result} fileName={submission.file.name} onReset={reset} />
+              <Results
+                result={submission.check.result}
+                file={submission.file}
+                fileName={submission.file.name}
+                onReset={reset}
+              />
             ) : (
               <SubmissionSummary
                 submission={submission}
