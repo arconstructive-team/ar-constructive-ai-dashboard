@@ -159,7 +159,68 @@ describe("runChatTurn", () => {
       "read_sheet_text",
       "create_or_update_artifact",
       "read_site_report",
+      "read_project_document",
     ]);
+  });
+
+  it("lists the project's documents in its context and reads the one a teammate attached", async () => {
+    const soils = store.addDocument("p1", {
+      name: "Soils report.pdf",
+      contentType: "application/pdf",
+      size: 120_000,
+      pageCount: 3,
+      uploadedBy: "Rafi",
+      pages: [
+        { page: 1, text: "Geotechnical investigation, 428 El Rio Rd" },
+        { page: 2, text: "Expansive clay; allowable bearing 1,500 psf" },
+        { page: 3, text: "Recommendations: drilled piers" },
+      ],
+    });
+    store.addDocument("p1", { name: "Lot photo.jpg", contentType: "image/jpeg", size: 9_000, pageCount: 0, uploadedBy: "Rafi", pages: [] });
+    store.addUserMessage("p1", "c1", "Rafi", "what bearing value should the foundation plan use?", [{ id: `doc:${soils}`, name: "Soils report.pdf" }]);
+    const model = scripted([
+      call("read_project_document", { source_id: `doc:${soils}`, pages: "2-3" }),
+      call("read_project_document", { source_id: "doc:missing" }, "call_2"),
+      say("The soils report (page 2) gives an allowable bearing of 1,500 psf."),
+    ]);
+    await runChatTurn({ store, model, config }, { projectId: "p1", chatId: "c1", user: MEMBER });
+
+    const first = model.requests[0]!;
+    expect(first.system[1]).toContain(`Soils report.pdf (source id doc:${soils}, uploaded by Rafi, 3 pages of text)`);
+    expect(first.system[1]).toContain("Lot photo.jpg (source id doc:");
+    expect(first.system[1]).toContain("no readable text");
+    expect(first.messages.at(-1)!.content).toBe(
+      `Rafi: what bearing value should the foundation plan use?\n\n[Attached project documents: Soils report.pdf (source id doc:${soils})]`,
+    );
+
+    const read = lastToolResult(model.requests[1]!);
+    expect(read.is_error).toBeUndefined();
+    expect(read.content).toContain("--- Page 2 ---\nExpansive clay; allowable bearing 1,500 psf");
+    expect(read.content).toContain("--- Page 3 ---");
+    expect(read.content).not.toContain("--- Page 1 ---");
+    const missing = lastToolResult(model.requests[2]!);
+    expect(missing.is_error).toBe(true);
+    expect(missing.content).toContain("No uploaded document doc:missing");
+  });
+
+  it("reads an artifact from another chat of the project, and says when a file has no text", async () => {
+    const other = await store.createArtifact("p1", { title: "Plan check response", kind: "document", chatId: "c9", updatedBy: "Rafi" });
+    await store.commitVersion("p1", other, { title: "Plan check response", content: "# Plan check response\n\nItem 1: added the egress window.", updatedBy: "Rafi", chatId: "c9" });
+    const photo = store.addDocument("p1", { name: "Lot photo.jpg", contentType: "image/jpeg", size: 9_000, pageCount: 0, uploadedBy: "Rafi", pages: [] });
+    store.addUserMessage("p1", "c1", "Rafi", "what did we answer for item 1?");
+    const model = scripted([
+      call("read_project_document", { source_id: `artifact:${other}` }),
+      call("read_project_document", { source_id: `doc:${photo}` }, "call_2"),
+      call("read_project_document", { source_id: "sheet 3" }, "call_3"),
+      say("Item 1: the egress window was added."),
+    ]);
+    await runChatTurn({ store, model, config }, { projectId: "p1", chatId: "c1", user: MEMBER });
+
+    expect(model.requests[0]!.system[1]).toContain(`Plan check response (source id artifact:${other}, document, version 1)`);
+    expect(lastToolResult(model.requests[1]!).content).toContain("Item 1: added the egress window.");
+    expect(lastToolResult(model.requests[2]!).content).toContain("has no text I can read");
+    expect(lastToolResult(model.requests[3]!)).toMatchObject({ is_error: true });
+    expect(lastToolResult(model.requests[3]!).content).toContain("is not a source id");
   });
 
   it("runs the permit check as a tool and saves the issue report as a new artifact version", async () => {

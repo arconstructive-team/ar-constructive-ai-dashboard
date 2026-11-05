@@ -11,17 +11,20 @@ import {
   FEMA_CHECK,
   climateZoneUrl,
   elevationUrl,
+  googleElevationUrl,
   fireZoneUrl,
   floodUrl,
   parseClimateZone,
   parseElevation,
+  parseGoogleElevation,
   parseFire,
   parseFlood,
   parseSeismic,
   responsibilityUrl,
   seismicUrls,
 } from "./hazards";
-import { SourceError, getJson, sourceRef, type Fetch } from "./http";
+import { SourceError, getJson, sourceRef, type Fetch, type HttpOptions } from "./http";
+import { parseSection, sectionLines, sectionUrl } from "./terrain";
 import { STATIC_MAP, mapLinks, parseStreetViewMetadata, satelliteImages, streetViewMetadataUrl } from "./imagery";
 import {
   CITY_ZONING_MAPS,
@@ -61,6 +64,8 @@ export interface PipelineOptions {
   fetch?: Fetch;
   now?: () => Date;
   timeoutMs?: number;
+  /** Wait before a retry (tests set 0). */
+  retryDelayMs?: number;
 }
 
 export const NO_KEY = "The Google Maps key is not set on the server (GOOGLE_MAPS_API_KEY).";
@@ -68,22 +73,34 @@ const NEEDS_LOCATION = "This step needs the address location, and the address lo
 /** Beyond this, Google's "closest building" may be a neighbor's. */
 const SOLAR_FAR_FEET = 150;
 
-type Get = (name: string, url: string) => Promise<unknown | null>;
+/** Per-source overrides of the request timeout and retries (see HttpOptions). */
+type GetOptions = Pick<HttpOptions, "timeoutMs" | "retries">;
+type Get = (name: string, url: string, opts?: GetOptions) => Promise<unknown | null>;
+
+/**
+ * The USGS elevation service is often slow (15 s and more) and sometimes answers HTTP 500 for a
+ * moment, so it gets a longer timeout and one more try than the other sources.
+ */
+const ELEVATION_HTTP: GetOptions = { timeoutMs: 25_000, retries: 1 };
+
+/** A source message without its full stop, to quote inside another sentence. */
+const bare = (message: string) => message.replace(/\.$/, "");
 type Cite = (name: string, url: string) => void;
 type Outcome<T> = Omit<Step<T>, "sources">;
 
 export async function buildSiteReport(address: string, options: PipelineOptions = {}): Promise<SiteReport> {
   const now = options.now ?? (() => new Date());
   const doFetch: Fetch = options.fetch ?? ((input, init) => fetch(input, init));
-  const http = { fetch: doFetch, timeoutMs: options.timeoutMs };
+  const http: HttpOptions = { fetch: doFetch, timeoutMs: options.timeoutMs, retryDelayMs: options.retryDelayMs };
   const key = options.apiKey?.trim() || undefined;
 
   async function step<T>(work: (get: Get, cite: Cite) => Promise<Outcome<T>>, checkUrl?: string): Promise<Step<T>> {
     const sources: SourceRef[] = [];
     const cite: Cite = (name, url) => void sources.push(sourceRef(name, url, now));
-    const get: Get = (name, url) => {
+    const get: Get = (name, url, opts) => {
       cite(name, url);
-      return getJson(url, http);
+      // A timeout set by the caller (tests) wins over a source's own.
+      return getJson(url, { ...http, ...opts, timeoutMs: options.timeoutMs ?? opts?.timeoutMs });
     };
     try {
       const out = await work(get, cite);
@@ -107,7 +124,7 @@ export async function buildSiteReport(address: string, options: PipelineOptions 
     } else {
       note = "No Google key on the server; the US Census geocoder was used.";
     }
-    return { status: "ok", data: parseCensusGeocode(await get("US Census Geocoder", censusGeocodeUrl(address))), note };
+    return { status: "ok", data: parseCensusGeocode(await get("US Census Geocoder", censusGeocodeUrl(address)), address), note };
   });
 
   const geo = geocode.data;
@@ -223,10 +240,41 @@ export async function buildSiteReport(address: string, options: PipelineOptions 
     };
   }, CGS_CHECK);
 
-  const elevation = step<Elevation>(async (get) => ({
-    status: "ok",
-    data: parseElevation(await get("USGS Elevation Point Query Service", elevationUrl(at))),
-  }));
+  // USGS first (the official source); Google Elevation only when USGS fails and the key is set.
+  const elevationPoint = async (get: Get): Promise<Outcome<Elevation>> => {
+    let usgsError: SourceError;
+    try {
+      return { status: "ok", data: parseElevation(await get("USGS Elevation Point Query Service", elevationUrl(at), ELEVATION_HTTP)) };
+    } catch (err) {
+      if (!(err instanceof SourceError) || !key) throw err;
+      usgsError = err;
+    }
+    try {
+      return {
+        status: "ok",
+        data: parseGoogleElevation(await get("Google Elevation API", googleElevationUrl(at, key))),
+        note: `USGS failed (${bare(usgsError.message)}); the Google Elevation API was used.`,
+      };
+    } catch (err) {
+      if (!(err instanceof SourceError)) throw err;
+      throw new SourceError(`USGS failed (${bare(usgsError.message)}), and so did Google (${bare(err.message)}).`);
+    }
+  };
+
+  // The terrain sections cut through the parcel outline, so they wait for the parcel step.
+  const elevation = step<Elevation>(async (get) => {
+    const [point, lot] = await Promise.all([elevationPoint(get), parcel]);
+    if (!key || !point.data) return point;
+    const lines = sectionLines(at, lot.data?.outline);
+    const read = await Promise.allSettled(lines.map(async (line) => parseSection(await get("Google Elevation API (terrain section)", sectionUrl(line, key)), line)));
+    const sections = read.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    const lost = read.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    const lostNote = lost
+      ? `The terrain sections could not be read (${lost.reason instanceof SourceError ? bare(lost.reason.message) : "unexpected error"}).`
+      : undefined;
+    const note = [point.note, lostNote].filter(Boolean).join(" ") || undefined;
+    return { ...point, data: sections.length > 0 ? { ...point.data, sections } : point.data, note };
+  });
 
   const climateZone = step<ClimateZone>(async (get) => {
     const z = parseClimateZone(await get("California Energy Commission building climate zones", climateZoneUrl(at)));

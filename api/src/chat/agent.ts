@@ -51,7 +51,10 @@ export function toModelMessages(history: StoredMessage[]): ModelMessage[] {
   for (const m of history) {
     const text = m.text.trim();
     if (!text) continue;
-    const content = m.role === "user" ? `${m.author || "Teammate"}: ${text}` : text;
+    const attached = m.sources?.length
+      ? `\n\n[Attached project documents: ${m.sources.map((src) => `${src.name} (source id ${src.id})`).join("; ")}]`
+      : "";
+    const content = m.role === "user" ? `${m.author || "Teammate"}: ${text}${attached}` : text;
     const last = out[out.length - 1];
     if (last && last.role === m.role) last.content += `\n\n${content}`;
     else out.push({ role: m.role, content });
@@ -72,13 +75,19 @@ export async function runChatTurn(deps: ChatDeps, req: ChatRequest, events: Chat
     throw new ChatError(409, "The chat has no new message to answer.");
   }
 
-  const set = await store.latestSet(projectId, chatId);
-  const artifacts = await store.listChatArtifacts(projectId, chatId);
+  const [set, artifacts, documents, projectArtifacts] = await Promise.all([
+    store.latestSet(projectId, chatId),
+    store.listChatArtifacts(projectId, chatId),
+    store.listDocuments(projectId),
+    store.listProjectArtifacts(projectId),
+  ]);
   const context = projectContext({
     project,
     set,
     sheetIndex: set ? sheetIndex(set) : [],
     artifacts,
+    documents,
+    projectArtifacts,
     today: (deps.now?.() ?? new Date()).toISOString().slice(0, 10),
   });
 

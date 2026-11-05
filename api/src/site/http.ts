@@ -6,21 +6,47 @@ export interface HttpOptions {
   fetch: Fetch;
   /** Per request. Default 12 s. */
   timeoutMs?: number;
+  /**
+   * Extra tries after a failure that came back fast: the source could not be reached, or it
+   * answered HTTP 5xx. A timeout is not tried again, so a slow source costs one timeout at most.
+   * Default 0.
+   */
+  retries?: number;
+  /** Wait before each extra try. Default 500 ms. */
+  retryDelayMs?: number;
 }
 
 /** A source that could not be read. The message is plain words for the Site page. */
 export class SourceError extends Error {}
 
+class RetryableError extends SourceError {}
+
 /** Reads one JSON answer. 404 resolves with null so a source can say "no data here". */
 export async function getJson(url: string, http: HttpOptions): Promise<unknown | null> {
+  const tries = 1 + Math.max(0, Math.floor(http.retries ?? 0));
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await getJsonOnce(url, http);
+    } catch (err) {
+      if (!(err instanceof RetryableError) || attempt >= tries) {
+        throw err instanceof RetryableError ? new SourceError(err.message) : err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, http.retryDelayMs ?? 500));
+    }
+  }
+}
+
+async function getJsonOnce(url: string, http: HttpOptions): Promise<unknown | null> {
   let res: Response;
   try {
     res = await http.fetch(url, { signal: AbortSignal.timeout(http.timeoutMs ?? 12_000), headers: { accept: "application/json" } });
   } catch (err) {
     const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
-    throw new SourceError(timedOut ? "The source did not answer in time." : "The source could not be reached.");
+    if (timedOut) throw new SourceError("The source did not answer in time.");
+    throw new RetryableError("The source could not be reached.");
   }
   if (res.status === 404) return null;
+  if (res.status >= 500) throw new RetryableError(`The source answered with HTTP ${res.status}.`);
   if (!res.ok) throw new SourceError(`The source answered with HTTP ${res.status}.`);
   try {
     return await res.json();

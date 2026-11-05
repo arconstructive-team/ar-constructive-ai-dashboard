@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { App } from "./App";
 import { createFirestoreSource } from "./artifacts/firestoreSource";
-import { auth, db } from "./auth/firebase";
+import { auth, db, storage } from "./auth/firebase";
 import { useSignedInUser } from "./auth/user";
 import { CHAT_API_URL, createChatApi } from "./lib/chatApi";
 import { CODE_CYCLE } from "./lib/project";
@@ -23,7 +23,7 @@ const focusRing = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-
 export function Root({ store: injected }: { store?: WorkspaceStore } = {}) {
   const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
   const user = useSignedInUser();
-  const store = useMemo(() => injected ?? (db ? createFirestoreStore(db) : null), [injected]);
+  const store = useMemo(() => injected ?? (db ? createFirestoreStore(db, storage) : null), [injected]);
   // Claude answers the chat through the chat API on Cloud Run, with the signed-in user's ID token.
   const chat = useMemo(
     () =>

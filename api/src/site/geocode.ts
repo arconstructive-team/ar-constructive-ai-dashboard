@@ -60,16 +60,54 @@ export function censusGeocodeUrl(address: string): string {
   })}`;
 }
 
-/** Reads a US Census Geocoder answer (the backup when Google is not available). */
-export function parseCensusGeocode(body: unknown): Geocode {
+interface CensusMatch {
+  matchedAddress?: string;
+  coordinates?: { x?: number; y?: number };
+  addressComponents?: Record<string, unknown>;
+  geographies?: { Counties?: { NAME?: string }[] };
+}
+
+const norm = (s: string | undefined) => s?.toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim() || undefined;
+
+/**
+ * The city and ZIP the architect typed ("street, city, state zip"). Either may be missing: then
+ * it is not checked.
+ */
+export function addressPlace(address: string): { city?: string; zip?: string } {
+  const zip = address.match(/\b(\d{5})(?:-\d{4})?\s*$/)?.[1];
+  const parts = address.split(",").map((p) => p.trim()).filter(Boolean);
+  const city = parts.length >= 3 ? norm(parts[parts.length - 2]) : undefined;
+  return { city, zip };
+}
+
+/**
+ * True when a Census match is in the place the architect asked for. The Census geocoder's fuzzy
+ * matching can answer with the same street number in another city ("456 Oak Ave, San Ramon" →
+ * "456 OAK ST, RAMONA"), so a match counts only when its ZIP or its city agrees with the address.
+ * The postal city can differ from the city the architect wrote, so one of the two is enough.
+ */
+function samePlace(m: CensusMatch, want: { city?: string; zip?: string }): boolean {
+  if (!want.city && !want.zip) return true;
+  const c = m.addressComponents ?? {};
+  const zip = str(c.zip);
+  const city = norm(str(c.city));
+  return (want.zip !== undefined && zip === want.zip) || (want.city !== undefined && city === want.city);
+}
+
+/**
+ * Reads a US Census Geocoder answer (the backup when Google is not available). With the address
+ * that was asked for, it takes the first match in that city or ZIP, and throws when every match
+ * is somewhere else.
+ */
+export function parseCensusGeocode(body: unknown, address?: string): Geocode {
   const matches = (body as { result?: { addressMatches?: unknown[] } } | null)?.result?.addressMatches;
   if (!Array.isArray(matches) || matches.length === 0) throw new SourceError("The Census geocoder found no match for this address.");
-  const m = matches[0] as {
-    matchedAddress?: string;
-    coordinates?: { x?: number; y?: number };
-    addressComponents?: Record<string, unknown>;
-    geographies?: { Counties?: { NAME?: string }[] };
-  };
+  const want = address ? addressPlace(address) : {};
+  const m = (matches as CensusMatch[]).find((x) => samePlace(x, want));
+  if (!m) {
+    const got = str((matches[0] as CensusMatch).matchedAddress) ?? "another place";
+    throw new SourceError(`The Census geocoder found no match in this city or ZIP; its closest match was ${got}.`);
+  }
   const lng = num(m.coordinates?.x);
   const lat = num(m.coordinates?.y);
   if (lat === undefined || lng === undefined) throw new SourceError("The Census geocoder answered without a location.");

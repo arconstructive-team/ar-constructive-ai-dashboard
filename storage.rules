@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Project documents: only the signed-in team reads and writes them (the same list as firestore.rules).
+// Files live at projects/{projectId}/documents/{documentId}/{fileName}. Everything else is denied.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isTeam() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in ['ahk.archteam@gmail.com', 'rdghoorchian@gmail.com'];
+    }
+
+    match /projects/{projectId}/documents/{documentId}/{fileName} {
+      allow read: if isTeam();
+      // 200 MB, the same limit as a permit set.
+      allow create: if isTeam() && request.resource.size < 200 * 1024 * 1024;
+      // A team member deleting the project removes its files too.
+      allow delete: if isTeam();
+      allow update: if false;
+    }
+  }
+}

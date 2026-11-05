@@ -23,6 +23,8 @@ export interface ImageSet {
   copyright: string;
   images: SiteImage[];
   date?: string;
+  /** Street View only: the panorama the photos come from. */
+  panoId?: string;
 }
 
 export interface Step<T = unknown> {
@@ -34,6 +36,96 @@ export interface Step<T = unknown> {
   checkUrl?: string;
   /** The facts in one plain line. */
   summary?: string;
+}
+
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
+export interface Geocode extends LatLng {
+  formattedAddress: string;
+  accuracy: string;
+  provider: "google" | "census";
+}
+
+export interface RoofSegment {
+  pitchDegrees: number;
+  azimuthDegrees: number;
+  areaSqft: number;
+  sunshineHoursPerYear: number;
+}
+
+export interface SolarRoof {
+  imageryDate?: string;
+  roofAreaSqft: number;
+  maxSunshineHoursPerYear: number;
+  maxPanels?: number;
+  segments: RoofSegment[];
+  distanceFeet: number;
+}
+
+export interface Parcel {
+  apn: string;
+  county: string;
+  assessorAcres?: number;
+  lotAreaSqft?: number;
+  useDescription?: string;
+  outline: LatLng[];
+  matchedBy: "point" | "address";
+}
+
+export interface Jurisdiction {
+  kind: "city" | "unincorporated";
+  name: string;
+}
+
+export interface Zoning {
+  district?: string;
+  description?: string;
+  overlay?: string;
+  mapUrl?: string;
+}
+
+export interface FloodZone {
+  zone: string;
+  subtype?: string;
+  inSpecialFloodHazardArea: boolean;
+  baseFloodElevationFeet?: number;
+  firmPanelId?: string;
+}
+
+export interface FireZone {
+  responsibility: "SRA" | "LRA" | "FRA" | "unknown";
+  hazardClass: "Very High" | "High" | "Moderate" | null;
+  chapter7A: "applies" | "check" | "not indicated";
+}
+
+export interface SeismicZones {
+  liquefaction: boolean;
+  landslide: boolean;
+  faultZone: boolean;
+}
+
+/** The ground along one line cut through the lot (api/src/site/terrain.ts). */
+export interface TerrainSection {
+  axis: "west-east" | "south-north";
+  lengthFeet: number;
+  points: { distanceFeet: number; feet: number }[];
+  lot?: { startFeet: number; endFeet: number };
+  lowFeet: number;
+  highFeet: number;
+  slopePercent: number;
+  downhill: "west" | "east" | "south" | "north";
+}
+
+export interface Elevation {
+  feet: number;
+  sections?: TerrainSection[];
+}
+
+export interface ClimateZone {
+  zone: string;
 }
 
 export const STEP_NAMES = [
@@ -68,9 +160,23 @@ export const STEP_LABEL: Record<StepName, string> = {
   climateZone: "Energy code climate zone",
 };
 
+/**
+ * Steps carry their data as the API wrote it. Reports saved before a field existed lack it, so
+ * every view checks the data it reads and falls back to the step's summary line.
+ */
 export type SiteSteps = Record<StepName, Step> & {
+  geocode: Step<Geocode>;
   streetView: Step<ImageSet>;
   satellite: Step<ImageSet>;
+  solar: Step<SolarRoof>;
+  parcel: Step<Parcel>;
+  jurisdiction: Step<Jurisdiction>;
+  zoning: Step<Zoning>;
+  flood: Step<FloodZone>;
+  fire: Step<FireZone>;
+  seismic: Step<SeismicZones>;
+  elevation: Step<Elevation>;
+  climateZone: Step<ClimateZone>;
 };
 
 export interface SiteReport {

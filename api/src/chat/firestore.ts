@@ -4,7 +4,7 @@
 // checks the team list itself before it gets here (./auth.ts).
 import { FieldValue, Timestamp, type DocumentData, type Firestore } from "firebase-admin/firestore";
 import type { SiteReport } from "../site/types";
-import type { ArtifactDoc, ArtifactKind, ArtifactStatus, ChatStore, StoredMessage, StoredSet } from "./store";
+import type { ArtifactDoc, ArtifactKind, ArtifactStatus, ChatStore, DocumentSummary, DocumentText, StoredMessage, StoredSet } from "./store";
 
 const KINDS: ArtifactKind[] = ["issue_report", "sheet_set", "document"];
 const STATUSES: ArtifactStatus[] = ["generating", "ready", "error"];
@@ -24,6 +24,28 @@ function artifactFrom(id: string, data: DocumentData): ArtifactDoc {
   };
 }
 
+function pagesFrom(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .filter((p: unknown) => typeof p === "object" && p !== null)
+        .map((p: { page?: unknown; text?: unknown }) => ({ page: count(p.page), text: text(p.text) }))
+    : [];
+}
+
+/** projects/{projectId}/documents/{documentId}, as the web app writes it (web/src/workspace/firestoreStore.ts). */
+export function documentFrom(id: string, data: DocumentData): DocumentSummary {
+  const doc: DocumentSummary = {
+    id,
+    name: text(data.name, "Untitled file"),
+    contentType: text(data.contentType, "application/octet-stream"),
+    size: count(data.size),
+    pageCount: count(data.pageCount),
+    uploadedBy: text(data.uploadedBy),
+  };
+  if (data.truncated === true) doc.truncated = true;
+  return doc;
+}
+
 /** The saved site report, when the document has the shape the web app writes. */
 export function siteReportFrom(data: DocumentData | undefined): SiteReport | null {
   if (!data || data.version !== 1 || typeof data.address !== "string" || typeof data.generatedAt !== "string") return null;
@@ -36,6 +58,7 @@ export function createFirestoreChatStore(db: Firestore): ChatStore {
   const chatDoc = (p: string, c: string) => projectDoc(p).collection("chats").doc(c);
   const messages = (p: string, c: string) => chatDoc(p, c).collection("messages");
   const artifacts = (p: string) => projectDoc(p).collection("artifacts");
+  const documents = (p: string) => projectDoc(p).collection("documents");
 
   return {
     async getProject(projectId) {
@@ -67,6 +90,13 @@ export function createFirestoreChatStore(db: Firestore): ChatStore {
             author: text(data.author),
           };
           if (typeof data.artifactId === "string") message.artifactId = data.artifactId;
+          if (Array.isArray(data.sources)) {
+            const sources = data.sources
+              .filter((x: unknown) => typeof x === "object" && x !== null)
+              .map((x: { id?: unknown; name?: unknown }) => ({ id: text(x.id), name: text(x.name) }))
+              .filter((x: { id: string }) => x.id);
+            if (sources.length) message.sources = sources;
+          }
           return message;
         })
         .reverse();
@@ -81,11 +111,7 @@ export function createFirestoreChatStore(db: Firestore): ChatStore {
       const set: StoredSet = {
         id: first.id,
         fileName: text(data.fileName),
-        pages: Array.isArray(data.pages)
-          ? data.pages
-              .filter((p: unknown) => typeof p === "object" && p !== null)
-              .map((p: { page?: unknown; text?: unknown }) => ({ page: count(p.page), text: text(p.text) }))
-          : [],
+        pages: pagesFrom(data.pages),
         project: { address: text(project.address), jurisdiction: text(project.jurisdiction), aduType: text(project.aduType) },
       };
       return set;
@@ -94,6 +120,25 @@ export function createFirestoreChatStore(db: Firestore): ChatStore {
     async getSiteReport(projectId) {
       const snap = await projectDoc(projectId).collection("site").doc("report").get();
       return snap.exists ? siteReportFrom(snap.data()) : null;
+    },
+    async listDocuments(projectId) {
+      // The page text stays on the server side of this list: only the summary fields are read.
+      const snap = await documents(projectId).orderBy("createdAt", "desc").select("name", "contentType", "size", "pageCount", "uploadedBy", "truncated").get();
+      return snap.docs.map((d) => documentFrom(d.id, d.data()));
+    },
+    async getDocument(projectId, documentId) {
+      const snap = await documents(projectId).doc(documentId).get();
+      if (!snap.exists) return null;
+      const data = snap.data() ?? {};
+      const doc: DocumentText = { ...documentFrom(snap.id, data), pages: pagesFrom(data.pages) };
+      return doc;
+    },
+    async listProjectArtifacts(projectId) {
+      const snap = await artifacts(projectId).get();
+      return snap.docs
+        .map((d) => ({ doc: artifactFrom(d.id, d.data()), at: millis(d.get("updatedAt")) }))
+        .sort((a, b) => b.at - a.at)
+        .map((a) => a.doc);
     },
 
     async addMessage(projectId, chatId, message) {

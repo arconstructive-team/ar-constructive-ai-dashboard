@@ -6,6 +6,8 @@
  * - projects/{projectId}/chats/{chatId}: title, createdBy, createdAt, updatedAt
  * - projects/{projectId}/chats/{chatId}/messages/{messageId}: role, text, author, createdAt, artifactId?
  * - projects/{projectId}/chats/{chatId}/sets/{setId}: fileName, pages, project, createdAt
+ * - projects/{projectId}/documents/{documentId}: name, contentType, size, storagePath, pages, pageCount,
+ *   truncated?, uploadedBy, createdAt, chatId? (the file itself in Storage at storagePath)
  * - projects/{projectId}/artifacts/{artifactId}: title, kind, status, content, version, chatId, updatedBy, updatedAt
  * - projects/{projectId}/artifacts/{artifactId}/versions/{version}: version, title, content, updatedBy, updatedAt, chatId
  * - projects/{projectId}/site/report: the site report (see site/types.ts); the chat assistant reads it too
@@ -53,6 +55,15 @@ export interface Chat {
 
 export type MessageRole = "user" | "assistant";
 
+/**
+ * A project document attached to a message with the Sources button. The id says which kind:
+ * "doc:{documentId}" for an uploaded file, "artifact:{artifactId}" for an artifact.
+ */
+export interface MessageSource {
+  id: string;
+  name: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -60,6 +71,7 @@ export interface Message {
   author: string;
   createdAt: Date | null;
   artifactId?: string;
+  sources?: MessageSource[];
 }
 
 export interface NewMessage {
@@ -67,6 +79,36 @@ export interface NewMessage {
   text: string;
   author: string;
   artifactId?: string;
+  sources?: MessageSource[];
+}
+
+/** A file in the project's documents: uploaded on the Documents page or with a chat's + button. */
+export interface ProjectDocument {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  /** Where the file is in Firebase Storage. */
+  storagePath: string;
+  /** Pages (or parts) of text the assistant can read; 0 for scans, images and other files. */
+  pageCount: number;
+  /** Only the first part of a very long file's text was kept. */
+  truncated?: boolean;
+  uploadedBy: string;
+  createdAt: Date | null;
+  /** The chat the file was uploaded in, when it came from a chat. */
+  chatId?: string;
+}
+
+export interface NewDocument {
+  file: Blob;
+  name: string;
+  contentType: string;
+  uploadedBy: string;
+  /** The text the browser read from the file, a page (or part) at a time. */
+  pages: PageText[];
+  truncated?: boolean;
+  chatId?: string;
 }
 
 export type ArtifactKind = "issue_report" | "sheet_set" | "document";
@@ -137,7 +179,15 @@ export interface WorkspaceStore {
   createProject(input: NewProject, by: Author): Promise<string>;
   renameProject(projectId: string, name: string): Promise<void>;
 
+  /**
+   * Deletes the project for the whole team: its chats with their messages and sets, its artifacts
+   * with their versions, its documents with their files, and its site report.
+   */
+  deleteProject(projectId: string): Promise<void>;
+
   watchChats(projectId: string, onData: (chats: Chat[]) => void, onError: OnError): Unsubscribe;
+  /** Deletes the chat, its messages and sets, and the artifacts written in it. Its uploaded files stay in the documents. */
+  deleteChat(projectId: string, chatId: string): Promise<void>;
   createChat(projectId: string, title: string, by: Author): Promise<string>;
   renameChat(projectId: string, chatId: string, title: string): Promise<void>;
 
@@ -164,4 +214,13 @@ export interface WorkspaceStore {
   /** The project's site report (projects/{id}/site/report), or null before the first run. */
   watchSiteReport(projectId: string, onData: (report: SiteReport | null) => void, onError: OnError): Unsubscribe;
   saveSiteReport(projectId: string, report: SiteReport): Promise<void>;
+
+  /** The project's uploaded files, newest first. */
+  watchDocuments(projectId: string, onData: (documents: ProjectDocument[]) => void, onError: OnError): Unsubscribe;
+  /** Stores the file and its text. Returns the document id. */
+  addDocument(projectId: string, input: NewDocument): Promise<string>;
+  /** A link that opens or downloads the stored file. */
+  documentUrl(projectId: string, document: ProjectDocument): Promise<string>;
+  /** Every artifact of the project, from all its chats, newest first. */
+  watchProjectArtifacts(projectId: string, onData: (artifacts: WorkspaceArtifact[]) => void, onError: OnError): Unsubscribe;
 }

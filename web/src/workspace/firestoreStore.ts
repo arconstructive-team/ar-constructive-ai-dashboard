@@ -14,11 +14,14 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
   type DocumentData,
+  type DocumentReference,
   type Firestore,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
+import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes, type FirebaseStorage } from "firebase/storage";
 import { ADU_TYPES, JURISDICTIONS, type AduType, type Jurisdiction, type ProjectData } from "../lib/project";
 import type { PageText } from "../lib/engine";
 import { isSiteReport } from "../site/types";
@@ -27,7 +30,9 @@ import {
   ARTIFACT_STATUSES,
   type Chat,
   type Message,
+  type MessageSource,
   type Project,
+  type ProjectDocument,
   type StoredSet,
   type WorkspaceArtifact,
   type WorkspaceStore,
@@ -79,8 +84,37 @@ export function messageFromData(id: string, data: DocumentData): Message {
     createdAt: toDate(data.createdAt),
   };
   if (typeof data.artifactId === "string") message.artifactId = data.artifactId;
+  const sources = sourcesFromData(data.sources);
+  if (sources.length) message.sources = sources;
   return message;
 }
+
+function sourcesFromData(value: unknown): MessageSource[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((x: unknown): x is { id?: unknown; name?: unknown } => typeof x === "object" && x !== null)
+    .map((x) => ({ id: text(x.id), name: text(x.name) }))
+    .filter((x) => x.id !== "");
+}
+
+export function documentFromData(id: string, data: DocumentData): ProjectDocument {
+  const d: ProjectDocument = {
+    id,
+    name: text(data.name, "Untitled file"),
+    contentType: text(data.contentType, "application/octet-stream"),
+    size: count(data.size),
+    storagePath: text(data.storagePath),
+    pageCount: count(data.pageCount),
+    uploadedBy: text(data.uploadedBy),
+    createdAt: toDate(data.createdAt),
+  };
+  if (data.truncated === true) d.truncated = true;
+  if (typeof data.chatId === "string") d.chatId = data.chatId;
+  return d;
+}
+
+/** Storage keeps the original name, minus characters that make awkward paths. */
+const storageName = (name: string) => name.replace(/[\\/#?\[\]*]+/g, "_").slice(0, 180) || "file";
 
 export function artifactFromData(id: string, data: DocumentData): WorkspaceArtifact {
   const artifact: WorkspaceArtifact = {
@@ -121,7 +155,16 @@ function setFromData(id: string, data: DocumentData): StoredSet {
 }
 
 /** The team workspace in the company's Firestore database. */
-export function createFirestoreStore(db: Firestore): WorkspaceStore {
+export function createFirestoreStore(db: Firestore, storage?: FirebaseStorage | null): WorkspaceStore {
+  /** Deletes the documents in batches (Firestore takes up to 500 writes in one). */
+  async function deleteAll(refs: DocumentReference[]) {
+    for (let i = 0; i < refs.length; i += 450) {
+      const batch = writeBatch(db);
+      for (const ref of refs.slice(i, i + 450)) batch.delete(ref);
+      await batch.commit();
+    }
+  }
+
   const projectDoc = (projectId: string) => doc(db, "projects", projectId);
   const chatDoc = (projectId: string, chatId: string) => doc(db, "projects", projectId, "chats", chatId);
   const artifactDoc = (projectId: string, artifactId: string) => doc(db, "projects", projectId, "artifacts", artifactId);
@@ -167,6 +210,49 @@ export function createFirestoreStore(db: Firestore): WorkspaceStore {
       return ref.id;
     },
 
+    async deleteChat(projectId, chatId) {
+      const refs: DocumentReference[] = [];
+      for (const sub of ["messages", "sets"]) {
+        const snap = await getDocs(collection(db, "projects", projectId, "chats", chatId, sub));
+        refs.push(...snap.docs.map((d) => d.ref));
+      }
+      const artifacts = await getDocs(query(collection(db, "projects", projectId, "artifacts"), where("chatId", "==", chatId)));
+      for (const a of artifacts.docs) {
+        refs.push(...(await getDocs(collection(a.ref, "versions"))).docs.map((d) => d.ref), a.ref);
+      }
+      refs.push(chatDoc(projectId, chatId));
+      await deleteAll(refs);
+    },
+
+    async deleteProject(projectId) {
+      const refs: DocumentReference[] = [];
+      const files: string[] = [];
+      for (const c of (await getDocs(collection(db, "projects", projectId, "chats"))).docs) {
+        for (const sub of ["messages", "sets"]) refs.push(...(await getDocs(collection(c.ref, sub))).docs.map((d) => d.ref));
+        refs.push(c.ref);
+      }
+      for (const a of (await getDocs(collection(db, "projects", projectId, "artifacts"))).docs) {
+        refs.push(...(await getDocs(collection(a.ref, "versions"))).docs.map((d) => d.ref), a.ref);
+      }
+      for (const d of (await getDocs(collection(db, "projects", projectId, "documents"))).docs) {
+        const path = d.get("storagePath");
+        if (typeof path === "string" && path) files.push(path);
+        refs.push(d.ref);
+      }
+      refs.push(doc(db, "projects", projectId, "site", "report"), projectDoc(projectId));
+      // The files first: a file left over without its record would never be found again.
+      if (storage) {
+        await Promise.all(
+          files.map((path) =>
+            deleteObject(storageRef(storage, path)).catch((err: { code?: string }) => {
+              if (err?.code !== "storage/object-not-found") throw err;
+            }),
+          ),
+        );
+      }
+      await deleteAll(refs);
+    },
+
     async renameChat(projectId, chatId, title) {
       await updateDoc(chatDoc(projectId, chatId), { title });
     },
@@ -184,6 +270,7 @@ export function createFirestoreStore(db: Firestore): WorkspaceStore {
       const ref = doc(collection(db, "projects", projectId, "chats", chatId, "messages"));
       const data: DocumentData = { role: message.role, text: message.text, author: message.author, createdAt: serverTimestamp() };
       if (message.artifactId) data.artifactId = message.artifactId;
+      if (message.sources?.length) data.sources = message.sources.map(({ id, name }) => ({ id, name }));
       batch.set(ref, data);
       batch.update(chatDoc(projectId, chatId), { updatedAt: serverTimestamp() });
       await batch.commit();
@@ -276,6 +363,51 @@ export function createFirestoreStore(db: Firestore): WorkspaceStore {
           const data: unknown = snap.exists() ? snap.data() : null;
           onData(isSiteReport(data) ? data : null);
         },
+        onError,
+      );
+    },
+
+    watchDocuments(projectId, onData, onError) {
+      return onSnapshot(
+        query(collection(db, "projects", projectId, "documents"), orderBy("createdAt", "desc")),
+        (snap) => onData(snap.docs.map((d) => documentFromData(d.id, read(d)))),
+        onError,
+      );
+    },
+
+    async addDocument(projectId, input) {
+      if (!storage) throw new Error("File storage is not set up for this dashboard, so files cannot be uploaded yet.");
+      const size = input.pages.reduce((sum, p) => sum + p.text.length, 0);
+      if (size > MAX_SET_CHARS) throw new Error("The text of this file is too large to keep. Split it into smaller files.");
+      const ref = doc(collection(db, "projects", projectId, "documents"));
+      const storagePath = `projects/${projectId}/documents/${ref.id}/${storageName(input.name)}`;
+      // The file first: a document record never points at a file that is not there.
+      await uploadBytes(storageRef(storage, storagePath), input.file, { contentType: input.contentType });
+      const data: DocumentData = {
+        name: input.name,
+        contentType: input.contentType,
+        size: input.file.size,
+        storagePath,
+        pages: input.pages,
+        pageCount: input.pages.length,
+        uploadedBy: input.uploadedBy,
+        createdAt: serverTimestamp(),
+      };
+      if (input.truncated) data.truncated = true;
+      if (input.chatId) data.chatId = input.chatId;
+      await setDoc(ref, data);
+      return ref.id;
+    },
+
+    async documentUrl(_projectId, document) {
+      if (!storage) throw new Error("File storage is not set up for this dashboard.");
+      return getDownloadURL(storageRef(storage, document.storagePath));
+    },
+
+    watchProjectArtifacts(projectId, onData, onError) {
+      return onSnapshot(
+        query(collection(db, "projects", projectId, "artifacts"), orderBy("updatedAt", "desc")),
+        (snap) => onData(snap.docs.map((d) => artifactFromData(d.id, read(d)))),
         onError,
       );
     },

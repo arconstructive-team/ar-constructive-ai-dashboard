@@ -1,7 +1,10 @@
+import type { PageText } from "../lib/engine";
 import type {
   Chat,
   Message,
+  NewDocument,
   Project,
+  ProjectDocument,
   StoredSet,
   WorkspaceArtifact,
   WorkspaceStore,
@@ -30,6 +33,8 @@ export class MemoryStore implements WorkspaceStore {
   versions = new Map<string, VersionRecord[]>();
   sets = new Map<string, StoredSet[]>();
   siteReports = new Map<string, SiteReport>();
+  /** Uploaded files by project, newest first, with their text and the bytes. */
+  documents = new Map<string, Array<ProjectDocument & { pages: PageText[]; file: Blob }>>();
   private listeners = new Set<() => void>();
   private seq = 0;
   private clock = Date.UTC(2026, 10, 5, 16, 0, 0);
@@ -92,6 +97,27 @@ export class MemoryStore implements WorkspaceStore {
     this.chats.set(id, { id, projectId, title, createdBy: by.email, createdAt: at, updatedAt: at });
     this.emit();
     return id;
+  }
+
+  async deleteChat(_projectId: string, chatId: string) {
+    this.chats.delete(chatId);
+    this.messages.delete(chatId);
+    this.sets.delete(chatId);
+    for (const [id, a] of this.artifacts) {
+      if (a.chatId === chatId) {
+        this.artifacts.delete(id);
+        this.versions.delete(id);
+      }
+    }
+    this.emit();
+  }
+
+  async deleteProject(projectId: string) {
+    for (const [id, chat] of this.chats) if (chat.projectId === projectId) await this.deleteChat(projectId, id);
+    this.documents.delete(projectId);
+    this.siteReports.delete(projectId);
+    this.projects.delete(projectId);
+    this.emit();
   }
 
   async renameChat(_projectId: string, chatId: string, title: string) {
@@ -178,6 +204,46 @@ export class MemoryStore implements WorkspaceStore {
 
   watchSiteReport(projectId: string, onData: (report: SiteReport | null) => void) {
     return this.watch(() => onData(this.siteReports.get(projectId) ?? null));
+  }
+
+  watchDocuments(projectId: string, onData: (documents: ProjectDocument[]) => void) {
+    return this.watch(() => onData((this.documents.get(projectId) ?? []).map(({ pages: _p, file: _f, ...d }) => d)));
+  }
+
+  async addDocument(projectId: string, input: NewDocument) {
+    const id = this.id("d");
+    const d: ProjectDocument & { pages: PageText[]; file: Blob } = {
+      id,
+      name: input.name,
+      contentType: input.contentType,
+      size: input.file.size,
+      storagePath: `projects/${projectId}/documents/${id}/${input.name}`,
+      pageCount: input.pages.length,
+      uploadedBy: input.uploadedBy,
+      createdAt: this.now(),
+      pages: input.pages,
+      file: input.file,
+      ...(input.truncated ? { truncated: true } : {}),
+      ...(input.chatId ? { chatId: input.chatId } : {}),
+    };
+    this.documents.set(projectId, [d, ...(this.documents.get(projectId) ?? [])]);
+    this.emit();
+    return id;
+  }
+
+  async documentUrl(projectId: string, document: ProjectDocument) {
+    return `memory://${projectId}/${document.id}/${encodeURIComponent(document.name)}`;
+  }
+
+  watchProjectArtifacts(projectId: string, onData: (artifacts: WorkspaceArtifact[]) => void) {
+    return this.watch(() =>
+      onData(
+        [...this.artifacts.values()]
+          .filter((a) => this.chats.get(a.chatId)?.projectId === projectId)
+          .sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0))
+          .map((a) => ({ ...a })),
+      ),
+    );
   }
 
   async saveSiteReport(projectId: string, report: SiteReport) {
