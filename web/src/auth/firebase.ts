@@ -28,6 +28,9 @@ export const db: Firestore | null = app ? getFirestore(app) : null;
 
 /** The project documents' files (Firebase Storage, default bucket). */
 export const storage: FirebaseStorage | null = app ? getStorage(app) : null;
+// The SDK retries a failed upload for 10 minutes by default. Give up after 30 seconds, so a missing
+// bucket or a network problem says so instead of keeping the chat waiting.
+if (storage) storage.maxUploadRetryTime = 30_000;
 
 // Local testing only (`pnpm dev:emulator`, web/.env.emulator): talk to the Firebase Auth and
 // Firestore emulators instead of the live project. Never set in a production build.

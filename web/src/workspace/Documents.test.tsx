@@ -63,6 +63,7 @@ describe("Documents page", () => {
     // A chat upload: the set is checked, and joins the project's documents.
     fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
     fireEvent.change(await view.findByLabelText("Permit set PDF"), { target: { files: [pdfFile()] } });
+    await askForCheck(view);
     await view.findByText(/The check found 1 issue in 2 pages/);
     await waitFor(() => expect(store.documents.get(projectId)?.[0]).toMatchObject({ name: "428-el-rio.pdf", pageCount: 2 }));
 
@@ -128,6 +129,7 @@ describe("Documents page", () => {
     // An artifact from an earlier chat, and an uploaded file.
     fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
     fireEvent.change(await view.findByLabelText("Permit set PDF"), { target: { files: [pdfFile()] } });
+    await askForCheck(view);
     await view.findByText(/The check found 1 issue in 2 pages/);
     const report = [...store.artifacts.values()][0]!;
     await store.addDocument(projectId, {
@@ -176,6 +178,7 @@ describe("deleting", () => {
     const projectId = [...store.projects.keys()][0]!;
     fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
     fireEvent.change(await view.findByLabelText("Permit set PDF"), { target: { files: [pdfFile()] } });
+    await askForCheck(view);
     await view.findByText(/The check found 1 issue in 2 pages/);
     await waitFor(() => expect(store.documents.get(projectId)).toHaveLength(1));
 
@@ -220,3 +223,12 @@ describe("deleting", () => {
     expect(await view.findByText("No projects yet.", { exact: false })).toBeTruthy();
   });
 });
+
+/** After an upload the assistant asks what to do: this answers with /check, for the issue report. */
+async function askForCheck(view: Pick<ReturnType<typeof render>, "findByText" | "getByRole" | "getByLabelText">) {
+  await view.findByText(/What do you want to do with it\?/);
+  await waitFor(() => expect((view.getByRole("button", { name: "Upload a permit set PDF" }) as HTMLButtonElement).disabled).toBe(false));
+  const message = view.getByLabelText("Message");
+  fireEvent.change(message, { target: { value: "/check" } });
+  fireEvent.keyDown(message, { key: "Enter" });
+}

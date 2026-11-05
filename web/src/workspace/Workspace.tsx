@@ -58,7 +58,8 @@ const ghostButton =
 type Loadable<T> = { kind: "loading" } | { kind: "ready"; data: T } | { kind: "error"; message: string };
 
 const SLASH_COMMANDS = [
-  { command: "/check", text: "Upload a permit set PDF and check it" },
+  { command: "/upload", text: "Upload a permit set PDF to work on" },
+  { command: "/check", text: "Check the set and write an issue report" },
   { command: "/regenerate", text: "Regenerate the cover data and notes sheets" },
   { command: "/help", text: "What I can do in this chat" },
 ] as const;
@@ -925,8 +926,9 @@ function ChatSession(props: {
           {messages.kind === "error" && <ErrorLine message={messages.message} />}
           {messages.kind === "ready" && messages.data.length === 0 && (
             <p className="text-sm text-muted">
-              Upload the permit set PDF with + below. I check it against the {CODE_CYCLE} California codes and{" "}
-              {project.jurisdiction || "the project's jurisdiction"}, and write the issue report on the right.
+              Upload the permit set PDF with + below, or ask about the project. I read the set, keep it for the team and ask
+              what to work on: an issue report against the {CODE_CYCLE} California codes and{" "}
+              {project.jurisdiction || "the project's jurisdiction"}, the sheets, notes, letters or plan check responses.
             </p>
           )}
           <ol className="grid gap-4">
@@ -977,7 +979,7 @@ function ChatSession(props: {
         ) : (
           <div className="flex flex-1 items-center justify-center p-8">
             <p className="max-w-[420px] text-center text-muted">
-              The issue report and regenerated sheets of this chat open here. Upload the permit set in the chat to start.
+              The documents this chat writes open here: issue reports, sheets, letters and notes.
             </p>
           </div>
         )}
@@ -1209,12 +1211,12 @@ function Composer(props: {
     event?.preventDefault();
     const value = text.trim();
     if (!value || props.busy) return;
-    if (value === "/check") {
+    if (value === "/upload") {
       fileInput.current?.click();
       setText("");
       return;
     }
-    const message = value === "/regenerate" ? "regenerate the sheets" : value === "/help" ? "help" : value;
+    const message = value === "/regenerate" ? "regenerate the sheets" : value === "/check" ? "check the set and write the issue report" : value === "/help" ? "help" : value;
     props.onSend(message, attached);
     setText("");
     setAttached([]);
