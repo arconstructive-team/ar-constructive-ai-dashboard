@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { Assistant } from "./assistant";
 import { MemoryStore } from "./memoryStore";
 import { Workspace } from "./Workspace";
+import { memoryRouter } from "./router";
 import { fakeCheck, PAGES } from "./fixtures.test-utils";
 import { createSiteApi, type SiteApi } from "../site/siteApi";
 import { isSiteReport, type SiteReport, type Step } from "../site/types";
@@ -13,7 +14,8 @@ const READ = "2026-11-05T18:00:00.000Z";
 
 afterEach(cleanup);
 
-const ok = (summary: string, source: string, url: string, extra: Partial<Step> = {}): Step => ({
+// Steps with a summary but no data, like reports saved before the data fields existed.
+const ok = (summary: string, source: string, url: string, extra: Partial<Step<never>> = {}): Step<never> => ({
   status: "ok",
   summary,
   sources: [{ name: source, url, fetchedAt: READ }],
@@ -90,7 +92,7 @@ function fakeSite(build: SiteApi["buildReport"]) {
 
 function mount(store: MemoryStore, site?: SiteApi) {
   const assistant = new Assistant({ store, extractPages: async () => PAGES, check: fakeCheck, pause: async () => undefined });
-  const { container } = render(<Workspace store={store} assistant={assistant} user={AHK} site={site} />);
+  const { container } = render(<Workspace store={store} assistant={assistant} user={AHK} site={site} router={memoryRouter()} />);
   return within(container);
 }
 
@@ -101,7 +103,7 @@ async function createProject(view: ReturnType<typeof mount>) {
   fireEvent.change(form.getByLabelText("Project address"), { target: { value: ADDRESS } });
   fireEvent.change(form.getByLabelText("Jurisdiction"), { target: { value: "City of San Ramon" } });
   fireEvent.click(form.getByRole("button", { name: "Create project" }));
-  await view.findByRole("button", { name: "El Rio ADU" });
+  await view.findByRole("link", { name: /^El Rio ADU/ });
 }
 
 describe("Site section", () => {
@@ -170,11 +172,11 @@ describe("Site section", () => {
     await createProject(view);
     const projectId = [...store.projects.keys()][0]!;
     const section = within(await view.findByRole("region", { name: "Site" }));
-    expect(section.getByRole("status").textContent).toContain("not connected");
+    expect(section.getByText(/not connected to this dashboard/).getAttribute("role")).toBe("status");
     expect((section.getByRole("button", { name: "Refresh site info" }) as HTMLButtonElement).disabled).toBe(true);
 
     await store.saveSiteReport(projectId, elRioReport());
-    expect(await section.findByText("Town of Danville (incorporated)")).toBeTruthy();
+    expect((await section.findAllByText("Town of Danville (incorporated)")).length).toBeGreaterThan(0);
     expect(screen.queryAllByRole("img")).toHaveLength(0);
   });
 });

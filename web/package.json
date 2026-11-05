@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "dev:emulator": "vite --mode emulator",
-    "emulators": "npx firebase-tools emulators:start --only auth,firestore --project demo-arconstructive --config ../firebase.json",
+    "emulators": "npx firebase-tools emulators:start --only auth,firestore,storage --project demo-arconstructive --config ../firebase.json --import .emulator-data --export-on-exit .emulator-data",
     "seed:emulator": "node scripts/seed-emulator.mjs",
     "build": "vite build",
     "preview": "vite preview",

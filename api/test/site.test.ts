@@ -15,6 +15,7 @@ import { COUNTY_ZONING, parseCountyZoning, parseJurisdiction } from "../src/site
 import { PARCEL_SOURCES, parcelAddressUrl, parcelSourceFor, parseParcel, streetName } from "../src/site/parcel";
 import { NO_KEY, buildSiteReport } from "../src/site/pipeline";
 import { parseSolar } from "../src/site/solar";
+import { parseSection, sectionLines, sectionUrl } from "../src/site/terrain";
 import { STEP_NAMES, type SiteReport } from "../src/site/types";
 
 const fixture = (name: string): unknown =>
@@ -515,8 +516,17 @@ describe("slow and flaky sources", () => {
     const fake = fakeFetch({ fail: { "epqs.nationalmap.gov": usgs } });
     const urls: string[] = [];
     const doFetch: Fetch = async (input, init) => {
-      if (String(input).includes("maps/api/elevation")) {
-        urls.push(String(input));
+      const url = String(input);
+      // Terrain sections: a gentle slope down to the east and to the south (heights in meters).
+      if (url.includes("maps/api/elevation") && url.includes("path=")) {
+        const n = Number(new URL(url).searchParams.get("samples"));
+        const eastward = decodeURIComponent(url).match(/path=([-\d.]+),[-\d.]+\|([-\d.]+)/);
+        const westEast = eastward ? eastward[1] === eastward[2] : true;
+        const results = Array.from({ length: n }, (_, i) => ({ elevation: westEast ? 130 - i * 0.2 : 125 + i * 0.1 }));
+        return new Response(JSON.stringify({ status: "OK", results }), { status: 200 });
+      }
+      if (url.includes("maps/api/elevation")) {
+        urls.push(url);
         return new Response(JSON.stringify(google), { status: 200 });
       }
       return fake.fetch(input, init);
@@ -536,13 +546,13 @@ describe("slow and flaky sources", () => {
     const e = report.steps.elevation;
     expect(e).toMatchObject({ status: "ok", data: { feet: 413.6 } });
     expect(e.note).toBe("USGS failed (The source answered with HTTP 500); the Google Elevation API was used.");
-    expect(e.sources.map((s) => s.name)).toEqual(["USGS Elevation Point Query Service", "Google Elevation API"]);
+    expect(e.sources.map((s) => s.name).slice(0, 2)).toEqual(["USGS Elevation Point Query Service", "Google Elevation API"]);
     // The stored source link never carries the key.
     expect(e.sources[1]!.url).not.toContain(KEY);
     expect(http.googleUrls).toHaveLength(1);
   });
 
-  it("does not ask Google when USGS answers", async () => {
+  it("does not ask Google for the point when USGS answers", async () => {
     const http = withGoogleElevation(0);
     const fake = fakeFetch();
     const report = await buildSiteReport(ADDRESS, {
@@ -569,5 +579,84 @@ describe("slow and flaky sources", () => {
       status: "failed",
       error: "USGS failed (The source answered with HTTP 500), and so did Google (Google Elevation answered REQUEST_DENIED).",
     });
+  });
+});
+
+describe("terrain sections", () => {
+  // A 100 ft square lot around the point (about 0.000274° of latitude per 100 ft).
+  const at = { lat: 37.8, lng: -122 };
+  const dLat = 50 / 364_610;
+  const dLng = 50 / (364_610 * Math.cos((37.8 * Math.PI) / 180));
+  const square = [
+    { lat: at.lat - dLat, lng: at.lng - dLng },
+    { lat: at.lat - dLat, lng: at.lng + dLng },
+    { lat: at.lat + dLat, lng: at.lng + dLng },
+    { lat: at.lat + dLat, lng: at.lng - dLng },
+  ];
+
+  it("cuts a west–east and a south–north line through the lot, past its lot lines", () => {
+    const [we, sn] = sectionLines(at, square);
+    expect(we!.axis).toBe("west-east");
+    expect(sn!.axis).toBe("south-north");
+    // 100 ft lot + 30% of its width beyond each side.
+    expect(we!.lengthFeet).toBeCloseTo(160, 0);
+    expect(we!.lot!.startFeet).toBeCloseTo(30, 0);
+    expect(we!.lot!.endFeet).toBeCloseTo(130, 0);
+    expect(we!.from.lat).toBeCloseTo(at.lat, 9);
+    expect(sn!.from.lng).toBeCloseTo(at.lng, 9);
+    expect(sn!.from.lat).toBeLessThan(sn!.to.lat);
+  });
+
+  it("runs 150 ft each way without a parcel outline", () => {
+    const [we] = sectionLines(at);
+    expect(we!.lengthFeet).toBe(300);
+    expect(we!.lot).toBeUndefined();
+  });
+
+  it("reads the profile in feet with the slope across the lot", () => {
+    const [we] = sectionLines(at, square);
+    // 5 samples, 1 m lower every sample toward the east.
+    const body = { status: "OK", results: [10, 9, 8, 7, 6].map((elevation) => ({ elevation })) };
+    const t = parseSection(body, we!);
+    expect(t.points).toHaveLength(5);
+    expect(t.points[0]).toEqual({ distanceFeet: 0, feet: 32.8 });
+    expect(t.points[4]!.distanceFeet).toBeCloseTo(160, 0);
+    expect(t.highFeet).toBe(32.8);
+    expect(t.lowFeet).toBe(19.7);
+    expect(t.downhill).toBe("east");
+    // Across the 100 ft lot (not the whole line): 2.5 m = 8.2 ft over 100 ft, from the rounded samples.
+    expect(t.slopePercent).toBeGreaterThan(8);
+    expect(t.slopePercent).toBeLessThan(8.3);
+    expect(() => parseSection({ status: "OVER_QUERY_LIMIT" }, we!)).toThrow(/OVER_QUERY_LIMIT/);
+    expect(sectionUrl(we!, "k")).toContain("samples=41");
+  });
+
+  it("adds both sections to the elevation step and its summary", async () => {
+    const fake = fakeFetch();
+    const doFetch: Fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("maps/api/elevation") && url.includes("path=")) {
+        const n = Number(new URL(url).searchParams.get("samples"));
+        return new Response(JSON.stringify({ status: "OK", results: Array.from({ length: n }, (_, i) => ({ elevation: 127 - i * 0.1 })) }), { status: 200 });
+      }
+      return fake.fetch(input, init);
+    };
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: doFetch, now: NOW });
+    const e = report.steps.elevation;
+    expect(e.status).toBe("ok");
+    expect(e.data?.feet).toBe(417.9);
+    expect(e.data?.sections?.map((t) => t.axis)).toEqual(["west-east", "south-north"]);
+    expect(e.data?.sections?.[0]!.points).toHaveLength(41);
+    expect(e.sources.filter((src) => src.name === "Google Elevation API (terrain section)")).toHaveLength(2);
+    expect(e.sources.every((src) => !src.url.includes(KEY))).toBe(true);
+    expect(e.summary).toMatch(/^417\.9 ft above sea level; across the lot: west–east the ground falls [\d.]+% toward the east, south–north the ground falls [\d.]+% toward the north$/);
+  });
+
+  it("keeps the elevation when the sections cannot be read", async () => {
+    const fake = fakeFetch({ fail: { "path=": 500 } });
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: fake.fetch, now: NOW });
+    expect(report.steps.elevation).toMatchObject({ status: "ok", data: { feet: 417.9 } });
+    expect(report.steps.elevation.data?.sections).toBeUndefined();
+    expect(report.steps.elevation.note).toBe("The terrain sections could not be read (The source answered with HTTP 500).");
   });
 });

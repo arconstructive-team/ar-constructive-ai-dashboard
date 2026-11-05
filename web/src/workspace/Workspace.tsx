@@ -4,11 +4,16 @@ import {
   ChevronDown,
   FileText,
   FolderOpen,
+  Library,
   Loader2,
+  MapPin,
   MessageSquare,
+  MoreHorizontal,
   Paperclip,
   Plus,
   SendHorizontal,
+  Trash2,
+  X,
 } from "lucide-react";
 import { ADU_TYPES, CODE_CYCLE, JURISDICTIONS, type AduType, type Jurisdiction } from "../lib/project";
 import { authorName } from "../auth/user";
@@ -16,15 +21,19 @@ import { RegeneratedSheets } from "../Regenerated";
 import { ASSISTANT_NAME, type Assistant, type ChatContext } from "./assistant";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { SitePanel, type SiteRun } from "./SitePanel";
+import { DocumentsPage } from "./DocumentsPage";
 import type { SiteApi } from "../site/siteApi";
 import { ArtifactPane as ArtifactCanvas } from "../artifacts/ArtifactPane";
+import { hashRouter, routeHref, type Router, type WorkspaceRoute } from "./router";
 import type { ArtifactSource } from "../artifacts/types";
 import {
   KIND_LABEL,
   type Author,
   type Chat,
   type Message,
+  type MessageSource,
   type Project,
+  type ProjectDocument,
   type WorkspaceArtifact,
   type WorkspaceStore,
 } from "./types";
@@ -38,6 +47,9 @@ const primaryButton =
   focusRing;
 const secondaryButton =
   "inline-flex h-11 items-center justify-center gap-2 rounded-control border border-border bg-surface px-4 text-[15px] font-semibold text-ink disabled:opacity-40 " +
+  focusRing;
+const dangerButton =
+  "inline-flex h-11 items-center justify-center gap-2 rounded-control bg-danger px-5 text-[15px] font-semibold text-bg disabled:opacity-40 " +
   focusRing;
 const ghostButton =
   "inline-flex min-h-11 items-center gap-2 rounded-control px-2 text-sm font-medium text-ink hover:bg-surface " + focusRing;
@@ -74,14 +86,24 @@ export interface WorkspaceProps {
   canvas?: ArtifactSource;
   /** The site report service (ARCO-16). Without it the Site section shows saved reports only. */
   site?: SiteApi;
+  /** Where the open project and chat live: the address bar by default (see router.ts). */
+  router?: Router;
 }
 
-export function Workspace({ store, assistant, user, canvas, site }: WorkspaceProps) {
+export function Workspace({ store, assistant, user, canvas, site, router: injectedRouter }: WorkspaceProps) {
+  const router = useMemo(() => injectedRouter ?? hashRouter(), [injectedRouter]);
   const [projects, setProjects] = useState<Loadable<Project[]>>({ kind: "loading" });
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [route, setRoute] = useState<WorkspaceRoute>(() => router.current());
+  const { projectId, chatId } = route;
   const [chats, setChats] = useState<Loadable<Chat[]>>({ kind: "loading" });
-  const [chatId, setChatId] = useState<string | null>(null);
-  const [panel, setPanel] = useState<Panel>("projects");
+  const [panel, setPanel] = useState<Panel>(() => (router.current().chatId ? "chat" : "projects"));
+
+  useEffect(() => router.subscribe(setRoute), [router]);
+
+  function go(next: WorkspaceRoute) {
+    setRoute(next);
+    router.go(next);
+  }
   const [creating, setCreating] = useState(false);
   const [siteRuns, setSiteRuns] = useState<Record<string, SiteRun>>({});
 
@@ -108,12 +130,18 @@ export function Workspace({ store, assistant, user, canvas, site }: WorkspacePro
   const chat = chats.kind === "ready" ? (chats.data.find((c) => c.id === chatId) ?? null) : null;
 
   function openProject(id: string) {
-    setProjectId(id);
-    setChatId(null);
+    go({ projectId: id, chatId: null });
+    setPanel("chat");
+  }
+
+  function openDocuments(id: string) {
+    go({ projectId: id, chatId: null, page: "documents" });
+    setPanel("chat");
   }
 
   function openChat(id: string) {
-    setChatId(id);
+    if (!projectId) return;
+    go({ projectId, chatId: id });
     setPanel("chat");
   }
 
@@ -185,6 +213,8 @@ export function Workspace({ store, assistant, user, canvas, site }: WorkspacePro
             chatId={chatId}
             onProject={openProject}
             onChat={openChat}
+            onDocuments={openDocuments}
+            documentsOpen={route.page === "documents" && !chatId}
             onNewChat={() => void newChat()}
             onNewProject={() => setCreating(true)}
           />
@@ -201,18 +231,44 @@ export function Workspace({ store, assistant, user, canvas, site }: WorkspacePro
           chat={chat}
           panel={panel}
           onPanel={setPanel}
+          onProject={() => openProject(project.id)}
+          onDocuments={() => openDocuments(project.id)}
+          initialArtifact={route.artifactId ?? null}
           canvas={canvas}
         />
       ) : (
         <section
-          aria-label="Chat"
-          className={`${panel === "projects" ? "hidden" : "flex"} flex-1 p-8 lg:flex ${
-            project ? "items-start justify-center overflow-y-auto" : "items-center justify-center"
+          aria-label={project ? "Project" : "Chat"}
+          className={`${panel === "projects" ? "hidden" : "flex"} min-w-0 flex-1 lg:flex ${
+            project ? "items-start justify-center overflow-y-auto" : "items-center justify-center p-8"
           }`}
         >
-          {project ? (
-            <div className="grid w-full max-w-[880px] gap-8">
-              <EmptyMain project={project} onNewChat={() => void newChat()} onNewProject={() => setCreating(true)} />
+          {project && route.page === "documents" ? (
+            <div className="grid w-full max-w-[1200px] px-4 pt-8 pb-24 md:px-8 lg:pt-12">
+              <DocumentsPage
+                store={store}
+                project={project}
+                chats={chats.kind === "ready" ? chats.data : []}
+                onUpload={(file) => assistant.addDocument(project.id, file, authorName(user))}
+                onProject={() => openProject(project.id)}
+                onArtifact={(chatId, artifactId) => {
+                  go({ projectId: project.id, chatId, artifactId });
+                  setPanel("artifact");
+                }}
+              />
+            </div>
+          ) : project ? (
+            <div className="grid w-full max-w-[1200px] gap-16 px-4 pt-8 pb-24 md:px-8 lg:pt-12">
+              <ProjectHeader
+                project={project}
+                onNewChat={() => void newChat()}
+                onDocuments={() => openDocuments(project.id)}
+                onDelete={async () => {
+                  await store.deleteProject(project.id);
+                  go({ projectId: null, chatId: null });
+                  setPanel("projects");
+                }}
+              />
               <SitePanel
                 store={store}
                 project={project}
@@ -221,12 +277,166 @@ export function Workspace({ store, assistant, user, canvas, site }: WorkspacePro
                 onRefresh={() => void refreshSite(project.id, project.address)}
               />
             </div>
+          ) : projectId && projects.kind === "ready" ? (
+            <div className="grid max-w-[480px] gap-4 text-center">
+              <h1 className="font-display text-2xl font-semibold leading-[1.25]">This project is not in the workspace</h1>
+              <p className="text-muted">The link may be old, or the project was removed. Choose a project from the list.</p>
+            </div>
           ) : (
             <EmptyMain project={null} onNewChat={() => void newChat()} onNewProject={() => setCreating(true)} />
           )}
         </section>
       )}
     </div>
+  );
+}
+
+function ProjectHeader(props: {
+  project: Project;
+  onNewChat: () => void;
+  onDocuments: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const { project } = props;
+  const [menu, setMenu] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const facts = [project.jurisdiction || "Jurisdiction not set", project.aduType, `${CODE_CYCLE} California codes`];
+  return (
+    <header className="grid">
+      <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+        <div className="grid gap-3">
+          <h1 className="font-display text-[32px] font-semibold leading-[1.1] md:text-[56px] md:leading-[1.05]">{project.name}</h1>
+          <p className="flex items-start gap-2 text-lg text-ink">
+            <MapPin aria-hidden className="mt-1 size-5 shrink-0" strokeWidth={1.5} />
+            {project.address || "No address yet"}
+          </p>
+          <ul aria-label="Project details" className="flex flex-wrap gap-2">
+            {facts.map((f) => (
+              <li key={f} className="bg-surface px-2 py-1 text-xs font-medium text-ink">
+                {f}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={routeHref({ projectId: project.id, chatId: null, page: "documents" })}
+            onClick={(e) => followLink(e, props.onDocuments)}
+            className={secondaryButton}
+          >
+            <Library aria-hidden className="size-4" strokeWidth={1.5} />
+            Documents
+          </a>
+          <button type="button" className={primaryButton} onClick={props.onNewChat}>
+            <MessageSquare aria-hidden className="size-4" strokeWidth={1.5} />
+            New chat
+          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="Project options"
+              aria-expanded={menu}
+              onClick={() => setMenu((v) => !v)}
+              className={`inline-flex size-11 items-center justify-center border border-border bg-surface ${focusRing}`}
+            >
+              <MoreHorizontal aria-hidden className="size-5" strokeWidth={1.5} />
+            </button>
+            {menu && (
+              <div role="menu" className="absolute top-full right-0 z-10 mt-1 grid min-w-52 rounded-sheet border border-border bg-bg py-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`${ghostButton} w-full px-4 text-danger`}
+                  onClick={() => {
+                    setMenu(false);
+                    setDeleting(true);
+                  }}
+                >
+                  <Trash2 aria-hidden className="size-4" strokeWidth={1.5} />
+                  Delete project
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {deleting && (
+        <div className="mt-6 border-l-4 border-danger bg-surface p-4">
+          <ConfirmDelete
+            title={`Delete ${project.name}?`}
+            detail="Every chat, artifact, document and file of this project, and its site report, are deleted for the whole team. This cannot be undone."
+            action="Delete project"
+            confirmText={project.name}
+            onCancel={() => setDeleting(false)}
+            onConfirm={props.onDelete}
+          />
+        </div>
+      )}
+
+    </header>
+  );
+}
+
+/** Plain clicks move inside the app; a modified click (new tab, new window) is left to the browser. */
+function followLink(event: React.MouseEvent<HTMLAnchorElement>, go: () => void) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  go();
+}
+
+/**
+ * An inline confirmation for a delete: what goes, and a button that says exactly what it does.
+ * With confirmText, the person types it first (for deletes that take a lot with them).
+ */
+function ConfirmDelete(props: {
+  title: string;
+  detail: string;
+  action: string;
+  confirmText?: string;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ready = !props.confirmText || typed.trim() === props.confirmText.trim();
+
+  async function confirm(event: FormEvent) {
+    event.preventDefault();
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await props.onConfirm();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : "It could not be deleted. Try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={confirm} aria-label={props.action} className="grid gap-3">
+      <div className="grid gap-1">
+        <p className="font-semibold text-danger">{props.title}</p>
+        <p className="text-sm text-ink">{props.detail}</p>
+      </div>
+      {props.confirmText && (
+        <label className="grid max-w-[420px] gap-1 text-sm font-medium">
+          Type the project name, {props.confirmText}, to confirm
+          <input className={inputBase} value={typed} autoFocus onChange={(e) => setTyped(e.target.value)} />
+        </label>
+      )}
+      {error && <ErrorLine message={error} />}
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" className={dangerButton} disabled={!ready || busy}>
+          {busy ? <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" strokeWidth={1.5} /> : <Trash2 aria-hidden className="size-4" strokeWidth={1.5} />}
+          {props.action}
+        </button>
+        <button type="button" className={ghostButton} onClick={props.onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -269,6 +479,8 @@ function ProjectList(props: {
   chatId: string | null;
   onProject: (id: string) => void;
   onChat: (id: string) => void;
+  onDocuments: (id: string) => void;
+  documentsOpen: boolean;
   onNewChat: () => void;
   onNewProject: () => void;
 }) {
@@ -298,17 +510,33 @@ function ProjectList(props: {
         const open = p.id === props.projectId;
         return (
           <li key={p.id}>
-            <button
-              type="button"
-              aria-current={open ? "true" : undefined}
-              onClick={() => props.onProject(p.id)}
-              className={`flex min-h-11 w-full items-center gap-2 px-2 text-left text-sm ${open ? "font-semibold" : ""} ${focusRing}`}
+            <a
+              href={routeHref({ projectId: p.id, chatId: null })}
+              aria-current={open && !props.chatId ? "page" : open ? "true" : undefined}
+              onClick={(e) => followLink(e, () => props.onProject(p.id))}
+              className={`flex min-h-12 w-full items-start gap-2 border-l-2 px-2 py-2 text-left text-sm hover:bg-surface ${
+                open ? "border-ink bg-surface" : "border-transparent"
+              } ${focusRing}`}
             >
-              <FolderOpen aria-hidden className="size-5 shrink-0" strokeWidth={1.5} />
-              <span className="min-w-0 flex-1 truncate">{p.name}</span>
-            </button>
+              <FolderOpen aria-hidden className="mt-0.5 size-5 shrink-0" strokeWidth={1.5} />
+              <span className="grid min-w-0 flex-1">
+                <span className={`truncate ${open ? "font-semibold" : "font-medium"}`}>{p.name}</span>
+                {p.address && <span className="truncate text-xs text-muted">{p.address}</span>}
+              </span>
+            </a>
             {open && (
-              <div className="ml-4 border-l border-border pl-2">
+              <div className="ml-5 pl-2">
+                <a
+                  href={routeHref({ projectId: p.id, chatId: null, page: "documents" })}
+                  aria-current={props.documentsOpen ? "page" : undefined}
+                  onClick={(e) => followLink(e, () => props.onDocuments(p.id))}
+                  className={`flex min-h-11 w-full items-center gap-2 border-l-2 px-2 text-left text-sm hover:bg-surface ${
+                    props.documentsOpen ? "border-accent font-semibold text-ink" : "border-transparent text-muted"
+                  } ${focusRing}`}
+                >
+                  <Library aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />
+                  Documents
+                </a>
                 {props.chats.kind === "loading" && <p className="py-2 text-sm text-muted">Loading chats…</p>}
                 {props.chats.kind === "error" && <ErrorLine message={props.chats.message} />}
                 {props.chats.kind === "ready" && (
@@ -316,17 +544,17 @@ function ProjectList(props: {
                     {props.chats.data.length === 0 && <li className="py-2 text-sm text-muted">No chats yet.</li>}
                     {props.chats.data.map((c) => (
                       <li key={c.id}>
-                        <button
-                          type="button"
+                        <a
+                          href={routeHref({ projectId: p.id, chatId: c.id })}
                           aria-current={c.id === props.chatId ? "page" : undefined}
-                          onClick={() => props.onChat(c.id)}
-                          className={`flex min-h-11 w-full items-center gap-2 px-2 text-left text-sm ${
-                            c.id === props.chatId ? "border-l-2 border-accent font-semibold" : "text-muted"
+                          onClick={(e) => followLink(e, () => props.onChat(c.id))}
+                          className={`flex min-h-11 w-full items-center gap-2 border-l-2 px-2 text-left text-sm hover:bg-surface ${
+                            c.id === props.chatId ? "border-accent font-semibold text-ink" : "border-transparent text-muted"
                           } ${focusRing}`}
                         >
                           <MessageSquare aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />
                           <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                        </button>
+                        </a>
                       </li>
                     ))}
                   </ul>
@@ -432,11 +660,18 @@ function ChatSession(props: {
   chat: Chat;
   panel: Panel;
   onPanel: (panel: Panel) => void;
+  onProject: () => void;
+  onDocuments: () => void;
+  initialArtifact: string | null;
   canvas?: ArtifactSource;
 }) {
   const { store, assistant, user, project, chat, panel, canvas } = props;
+  const sources = useProjectSources(store, project.id);
   const [messages, setMessages] = useState<Loadable<Message[]>>({ kind: "loading" });
-  const [chosenArtifact, setChosenArtifact] = useState<string | null>(null);
+  const [chosenArtifact, setChosenArtifact] = useState<string | null>(props.initialArtifact);
+  useEffect(() => {
+    if (props.initialArtifact) setChosenArtifact(props.initialArtifact);
+  }, [props.initialArtifact]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -484,7 +719,7 @@ function ChatSession(props: {
         aria-label="Chat"
         className={`${panel === "chat" ? "flex" : "hidden"} min-h-0 w-full flex-col border-border lg:flex lg:w-[420px] lg:shrink-0 lg:border-r`}
       >
-        <ChatHeader store={store} project={project} chat={chat} />
+        <ChatHeader store={store} project={project} chat={chat} onProject={props.onProject} />
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
           {messages.kind === "loading" && (
             <div role="status" aria-label="Loading messages" className="grid gap-3">
@@ -516,7 +751,9 @@ function ChatSession(props: {
         {failure && <ErrorLine message={failure} />}
         <Composer
           busy={busy}
-          onSend={(text) => void run(() => assistant.send(context(), text))}
+          sources={sources}
+          onDocuments={props.onDocuments}
+          onSend={(text, attached) => void run(() => assistant.send(context(), text, attached))}
           onFile={(file) => void run(() => assistant.upload(context(), file))}
         />
       </section>
@@ -548,9 +785,10 @@ function ChatSession(props: {
   );
 }
 
-function ChatHeader(props: { store: WorkspaceStore; project: Project; chat: Chat }) {
+function ChatHeader(props: { store: WorkspaceStore; project: Project; chat: Chat; onProject: () => void }) {
   const { store, project, chat } = props;
   const [menu, setMenu] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState<"chat" | "project" | null>(null);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -573,6 +811,23 @@ function ChatHeader(props: { store: WorkspaceStore; project: Project; chat: Chat
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : "The name could not be saved. Try again.");
     }
+  }
+
+  if (deleting) {
+    return (
+      <div className="border-b border-border px-4 py-3">
+        <ConfirmDelete
+          title={`Delete ${chat.title}?`}
+          detail="Its messages and the artifacts written in it are deleted for the whole team. Files it added stay in the project's documents. This cannot be undone."
+          action="Delete chat"
+          onCancel={() => setDeleting(false)}
+          onConfirm={async () => {
+            await store.deleteChat(project.id, chat.id);
+            props.onProject();
+          }}
+        />
+      </div>
+    );
   }
 
   if (renaming) {
@@ -598,7 +853,13 @@ function ChatHeader(props: { store: WorkspaceStore; project: Project; chat: Chat
   return (
     <div className="relative flex min-h-14 items-center gap-2 border-b border-border px-4">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-muted">{project.name}</p>
+        <a
+          href={routeHref({ projectId: project.id, chatId: null })}
+          onClick={(e) => followLink(e, () => props.onProject())}
+          className={`block truncate text-xs font-medium text-muted underline-offset-4 hover:underline ${focusRing}`}
+        >
+          {project.name}
+        </a>
         <h1 className="truncate font-display text-base font-semibold">{chat.title}</h1>
       </div>
       <button
@@ -618,6 +879,18 @@ function ChatHeader(props: { store: WorkspaceStore; project: Project; chat: Chat
           <button type="button" role="menuitem" className={`${ghostButton} w-full px-4`} onClick={() => startRename("project")}>
             Rename project
           </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`${ghostButton} w-full border-t border-border px-4 text-danger`}
+            onClick={() => {
+              setMenu(false);
+              setDeleting(true);
+            }}
+          >
+            <Trash2 aria-hidden className="size-4" strokeWidth={1.5} />
+            Delete chat
+          </button>
         </div>
       )}
     </div>
@@ -633,6 +906,16 @@ function MessageItem(props: { message: Message; open: boolean; onOpen: (artifact
         {mine ? message.author : ASSISTANT_NAME} · {timeLabel(message.createdAt)}
       </p>
       <p className="mt-1 whitespace-pre-line">{message.text}</p>
+      {message.sources && message.sources.length > 0 && (
+        <ul aria-label="Attached documents" className="mt-2 flex flex-wrap gap-1">
+          {message.sources.map((src) => (
+            <li key={src.id} className="inline-flex items-center gap-1 border border-border bg-bg px-1.5 py-0.5 text-xs">
+              <FileText aria-hidden className="size-3.5" strokeWidth={1.5} />
+              {src.name}
+            </li>
+          ))}
+        </ul>
+      )}
       {message.artifactId && (
         <button
           type="button"
@@ -648,11 +931,67 @@ function MessageItem(props: { message: Message; open: boolean; onOpen: (artifact
   );
 }
 
-function Composer(props: { busy: boolean; onSend: (text: string) => void; onFile: (file: File) => void }) {
+/** The project's documents as sources a message can attach: uploads first, then artifacts. */
+function useProjectSources(store: WorkspaceStore, projectId: string): SourceOption[] {
+  const [docs, setDocs] = useState<ProjectDocument[]>([]);
+  const [artifacts, setArtifacts] = useState<WorkspaceArtifact[]>([]);
+  useEffect(() => store.watchDocuments(projectId, setDocs, () => setDocs([])), [store, projectId]);
+  useEffect(() => store.watchProjectArtifacts(projectId, setArtifacts, () => setArtifacts([])), [store, projectId]);
+  return useMemo(
+    () => [
+      ...docs.map((d) => ({ id: `doc:${d.id}`, name: d.name, detail: d.pageCount > 0 ? `${d.pageCount} ${d.pageCount === 1 ? "page" : "pages"}` : "No text" })),
+      ...artifacts.map((a) => ({ id: `artifact:${a.id}`, name: a.title, detail: `${KIND_LABEL[a.kind]}, version ${a.version}` })),
+    ],
+    [docs, artifacts],
+  );
+}
+
+interface SourceOption extends MessageSource {
+  detail: string;
+}
+
+function Composer(props: {
+  busy: boolean;
+  sources: SourceOption[];
+  onDocuments: () => void;
+  onSend: (text: string, sources: MessageSource[]) => void;
+  onFile: (file: File) => void;
+}) {
   const [text, setText] = useState("");
+  const [attached, setAttached] = useState<MessageSource[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [caret, setCaret] = useState(0);
+  const [active, setActive] = useState(0);
+  const [mentionClosed, setMentionClosed] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
+  const listId = useId();
   const showCommands = text.startsWith("/");
+
+  // "@" followed by what the person typed so far, right before the caret: a mention being written.
+  const mention = useMemo(() => {
+    const m = text.slice(0, caret).match(/(^|\s)@([^\n@]{0,60})$/);
+    if (!m || mentionClosed) return null;
+    const query = m[2]!.toLowerCase();
+    const matches = props.sources.filter((src) => src.name.toLowerCase().includes(query.trim())).slice(0, 8);
+    return { start: caret - m[2]!.length - 1, query, matches };
+  }, [text, caret, mentionClosed, props.sources]);
+
+  function pick(src: SourceOption) {
+    if (!mention) return;
+    const before = text.slice(0, mention.start);
+    const after = text.slice(caret);
+    const inserted = `@${src.name} `;
+    setText(before + inserted + after);
+    setAttached((list) => (list.some((a) => a.id === src.id) ? list : [...list, { id: src.id, name: src.name }]));
+    const at = before.length + inserted.length;
+    setCaret(at);
+    requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(at, at);
+    });
+  }
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -664,11 +1003,31 @@ function Composer(props: { busy: boolean; onSend: (text: string) => void; onFile
       return;
     }
     const message = value === "/regenerate" ? "regenerate the sheets" : value === "/help" ? "help" : value;
-    props.onSend(message);
+    props.onSend(message, attached);
     setText("");
+    setAttached([]);
+    setPicking(false);
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (mention && mention.matches.length > 0) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const n = mention.matches.length;
+        setActive((i) => (event.key === "ArrowDown" ? (i + 1) % n : (i - 1 + n) % n));
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        pick(mention.matches[Math.min(active, mention.matches.length - 1)]!);
+        return;
+      }
+    }
+    if (mention && event.key === "Escape") {
+      event.preventDefault();
+      setMentionClosed(true);
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submit();
@@ -677,6 +1036,41 @@ function Composer(props: { busy: boolean; onSend: (text: string) => void; onFile
 
   return (
     <form onSubmit={submit} aria-label="Send a message" className="border-t border-border p-3">
+      {mention && (
+        <div className="mb-2 grid border border-ink bg-bg">
+          <p className="border-b border-border px-3 py-2 text-xs text-muted">
+            {mention.matches.length > 0 ? "Attach a project document" : props.sources.length === 0 ? "No project documents yet" : `No document matches "${mention.query}"`}
+          </p>
+          {mention.matches.length > 0 && (
+            <ul id={listId} role="listbox" aria-label="Project documents">
+              {mention.matches.map((src, i) => (
+                <li
+                  key={src.id}
+                  id={`${listId}-${i}`}
+                  role="option"
+                  aria-selected={i === active}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pick(src);
+                  }}
+                  onMouseEnter={() => setActive(i)}
+                  className={`flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 text-sm ${i === active ? "bg-surface" : ""}`}
+                >
+                  {src.id.startsWith("artifact:") ? (
+                    <FileText aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />
+                  ) : (
+                    <Paperclip aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />
+                  )}
+                  <span className="grid min-w-0">
+                    <span className="truncate font-medium">{src.name}</span>
+                    <span className="text-xs text-muted">{src.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {showCommands && (
         <ul aria-label="Commands" className="mb-2 grid border border-border bg-bg">
           {SLASH_COMMANDS.filter((c) => c.command.startsWith(text.trim())).map((c) => (
@@ -694,7 +1088,79 @@ function Composer(props: { busy: boolean; onSend: (text: string) => void; onFile
           ))}
         </ul>
       )}
+      {picking && (
+        <div className="mb-2 grid max-h-72 overflow-y-auto border border-ink bg-bg">
+          <p className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted">
+            <span>Attach project documents for the assistant to read</span>
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                props.onDocuments();
+              }}
+              className={`font-medium text-ink underline underline-offset-4 ${focusRing}`}
+            >
+              Upload more
+            </a>
+          </p>
+          {props.sources.length === 0 ? (
+            <p className="px-3 py-3 text-sm text-muted">No documents yet. Add files on the project's Documents page.</p>
+          ) : (
+            <ul aria-label="Project documents to attach">
+              {props.sources.map((src) => {
+                const on = attached.some((a) => a.id === src.id);
+                return (
+                  <li key={src.id}>
+                    <label className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-surface">
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() =>
+                          setAttached((list) => (on ? list.filter((a) => a.id !== src.id) : [...list, { id: src.id, name: src.name }]))
+                        }
+                        className="size-4 accent-accent"
+                      />
+                      <span className="grid min-w-0">
+                        <span className="truncate font-medium">{src.name}</span>
+                        <span className="text-xs text-muted">{src.detail}</span>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+      {attached.length > 0 && (
+        <ul aria-label="Attached documents" className="mb-2 flex flex-wrap gap-2">
+          {attached.map((a) => (
+            <li key={a.id} className="inline-flex items-center gap-1 bg-surface py-1 pr-1 pl-2 text-xs font-medium">
+              <FileText aria-hidden className="size-3.5" strokeWidth={1.5} />
+              <span className="max-w-48 truncate">{a.name}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${a.name}`}
+                onClick={() => setAttached((list) => list.filter((x) => x.id !== a.id))}
+                className={`inline-flex size-6 items-center justify-center hover:bg-border ${focusRing}`}
+              >
+                <X aria-hidden className="size-3.5" strokeWidth={1.5} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="flex items-end gap-2 border border-border bg-surface p-1 focus-within:border-accent">
+        <button
+          type="button"
+          aria-label="Attach project documents"
+          aria-expanded={picking}
+          title="Sources: attach project documents"
+          onClick={() => setPicking((v) => !v)}
+          className={`inline-flex size-11 shrink-0 items-center justify-center rounded-control ${picking || attached.length ? "text-accent" : ""} ${focusRing}`}
+        >
+          <Library aria-hidden className="size-5" strokeWidth={1.5} />
+        </button>
         <button
           type="button"
           aria-label="Upload a permit set PDF"
@@ -723,10 +1189,22 @@ function Composer(props: { busy: boolean; onSend: (text: string) => void; onFile
         <textarea
           id={inputId}
           rows={1}
+          ref={textarea}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setCaret(e.target.selectionStart ?? e.target.value.length);
+            setActive(0);
+            setMentionClosed(false);
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onKeyDown={onKeyDown}
-          placeholder="Type / for commands"
+          role="combobox"
+          aria-expanded={!!mention && mention.matches.length > 0}
+          aria-controls={mention ? listId : undefined}
+          aria-autocomplete="list"
+          aria-activedescendant={mention && mention.matches.length > 0 ? `${listId}-${active}` : undefined}
+          placeholder="Type @ to attach a document, / for commands"
           className="max-h-40 min-h-11 flex-1 resize-none bg-transparent px-2 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none"
         />
         <button

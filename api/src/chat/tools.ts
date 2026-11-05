@@ -76,6 +76,19 @@ export const TOOL_SPECS: ToolSpec[] = [
     },
   },
   READ_SITE_REPORT_TOOL,
+  {
+    name: "read_project_document",
+    description:
+      "Read one of the project's documents: a file the team uploaded (source id doc:…) or an artifact from any chat of the project (source id artifact:…). The source ids are listed under \"Project documents\". Long files return a part at a time: pass pages to read further.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source_id: { type: "string", description: "The document's source id, e.g. doc:abc123 or artifact:xyz789." },
+        pages: { type: "string", description: "Pages to read, e.g. 3 or 3-8. Leave out to start at the first page." },
+      },
+      required: ["source_id"],
+    },
+  },
 ];
 
 export interface ToolContext {
@@ -125,6 +138,60 @@ function engineOptions(input: Record<string, unknown>, ctx: ToolContext): Engine
     aduType: aduType ?? (ctx.set?.project.aduType || ctx.project.aduType || "No ADU"),
     address: optionalString(input, "address") ?? (ctx.set?.project.address || ctx.project.address || undefined),
   };
+}
+
+/** "3" → [3, 3]; "3-8" → [3, 8]. */
+function pageRange(raw: string | undefined): [number, number] | null {
+  if (!raw) return null;
+  const m = raw.match(/^\s*(\d+)\s*(?:[-–]\s*(\d+))?\s*$/);
+  if (!m) throw new ToolInputError(`pages must look like 3 or 3-8, not "${raw}".`);
+  const a = Number(m[1]);
+  const b = m[2] ? Number(m[2]) : a;
+  if (a < 1 || b < a) throw new ToolInputError(`pages "${raw}" is not a range of pages.`);
+  return [a, b];
+}
+
+async function readProjectDocument(input: unknown, ctx: ToolContext): Promise<ToolOutcome> {
+  const args = record(input);
+  const sourceId = optionalString(args, "source_id");
+  if (!sourceId) throw new ToolInputError("source_id is required, e.g. doc:abc123.");
+  const [kind, id] = sourceId.split(":", 2) as [string, string | undefined];
+  if (!id || (kind !== "doc" && kind !== "artifact")) {
+    throw new ToolInputError(`"${sourceId}" is not a source id. Use doc:… or artifact:… from the Project documents list.`);
+  }
+
+  if (kind === "artifact") {
+    const a = await ctx.store.getArtifact(ctx.projectId, id);
+    if (!a) return { content: `No artifact ${sourceId} in this project.`, isError: true };
+    const body = a.content.length > MAX_SHEET_CHARS ? `${a.content.slice(0, MAX_SHEET_CHARS)}\n\n[cut at ${MAX_SHEET_CHARS} characters]` : a.content;
+    return { content: `# ${a.title} (${a.kind}, version ${a.version})\n\n${body}`, isError: false };
+  }
+
+  const doc = await ctx.store.getDocument(ctx.projectId, id);
+  if (!doc) return { content: `No uploaded document ${sourceId} in this project.`, isError: true };
+  if (doc.pages.length === 0) {
+    return {
+      content: `${doc.name} (${doc.contentType}) has no text I can read: it may be a scan, an image or a format without text. Ask the team what it shows.`,
+      isError: false,
+    };
+  }
+  const range = pageRange(optionalString(args, "pages"));
+  const wanted = range ? doc.pages.filter((p) => p.page >= range[0] && p.page <= range[1]) : doc.pages;
+  if (wanted.length === 0) return { content: `${doc.name} has pages 1 to ${doc.pages.length}; none in ${args.pages}.`, isError: true };
+
+  const out: string[] = [`# ${doc.name} (${doc.pages.length} ${doc.pages.length === 1 ? "page" : "pages"}${doc.truncated ? ", text cut short when uploaded" : ""})`];
+  let used = 0;
+  let last = 0;
+  for (const p of wanted) {
+    const block = `\n--- Page ${p.page} ---\n${p.text.trim() || "(no text on this page)"}`;
+    if (used + block.length > MAX_SHEET_CHARS && last > 0) break;
+    out.push(block.length > MAX_SHEET_CHARS ? `${block.slice(0, MAX_SHEET_CHARS)}\n[page cut short]` : block);
+    used += block.length;
+    last = p.page;
+  }
+  const end = wanted[wanted.length - 1]!.page;
+  if (last < end) out.push(`\n[Stopped after page ${last} to keep the answer short. Read pages ${last + 1}-${end} next.]`);
+  return { content: out.join("\n"), isError: false };
 }
 
 /** Writes the document a part at a time, then saves it as the next version. */
@@ -271,6 +338,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         return { content: await createOrUpdate(input, ctx), isError: false };
       case "read_site_report":
         return runReadSiteReport(() => ctx.store.getSiteReport(ctx.projectId));
+      case "read_project_document":
+        return await readProjectDocument(input, ctx);
       default:
         return { content: `Unknown tool ${name}.`, isError: true };
     }

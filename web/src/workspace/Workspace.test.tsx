@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { Assistant } from "./assistant";
 import { MemoryStore } from "./memoryStore";
 import { Workspace } from "./Workspace";
+import { memoryRouter } from "./router";
 import { fakeCheck, PAGES, pdfFile } from "./fixtures.test-utils";
 
 const AHK = { uid: "u1", email: "ahk.archteam@gmail.com", name: "Ahk" };
@@ -13,7 +14,8 @@ afterEach(cleanup);
 /** One team member's browser: its own assistant, the shared store. */
 function browser(store: MemoryStore, user: typeof AHK) {
   const assistant = new Assistant({ store, extractPages: async () => PAGES, check: fakeCheck, pause: async () => undefined });
-  const { container } = render(<Workspace store={store} assistant={assistant} user={user} />);
+  // Each member gets a router of their own, like two browsers with their own address bars.
+  const { container } = render(<Workspace store={store} assistant={assistant} user={user} router={memoryRouter()} />);
   return within(container);
 }
 
@@ -24,7 +26,7 @@ async function createProject(view: ReturnType<typeof browser>) {
   fireEvent.change(form.getByLabelText("Project address"), { target: { value: "428 El Rio Rd, Danville" } });
   fireEvent.change(form.getByLabelText("Jurisdiction"), { target: { value: "City of San Ramon" } });
   fireEvent.click(form.getByRole("button", { name: "Create project" }));
-  await view.findByRole("button", { name: "El Rio ADU" });
+  await view.findByRole("link", { name: /^El Rio ADU/ });
 }
 
 describe("Workspace", () => {
@@ -49,17 +51,64 @@ describe("Workspace", () => {
 
     fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
     const chats = await view.findByRole("list", { name: "Chats in El Rio ADU" });
-    expect(within(chats).getByRole("button", { name: "Chat 1" }).getAttribute("aria-current")).toBe("page");
+    expect(within(chats).getByRole("link", { name: "Chat 1" }).getAttribute("aria-current")).toBe("page");
     expect(view.getByRole("heading", { level: 1, name: "Chat 1" })).toBeTruthy();
-    expect(view.getByLabelText("Message").getAttribute("placeholder")).toBe("Type / for commands");
+    expect(view.getByLabelText("Message").getAttribute("placeholder")).toBe("Type @ to attach a document, / for commands");
 
     fireEvent.click(view.getByRole("button", { name: "Chat options" }));
     fireEvent.click(view.getByRole("menuitem", { name: "Rename chat" }));
     fireEvent.change(view.getByLabelText("Chat name"), { target: { value: "Plan check, round 1" } });
     fireEvent.click(view.getByRole("button", { name: "Save name" }));
     expect(await view.findByRole("heading", { level: 1, name: "Plan check, round 1" })).toBeTruthy();
-    expect(within(chats).getByRole("button", { name: "Plan check, round 1" })).toBeTruthy();
+    expect(within(chats).getByRole("link", { name: "Plan check, round 1" })).toBeTruthy();
     expect([...store.chats.values()][0].title).toBe("Plan check, round 1");
+  });
+
+  it("gives every project and chat its own link, and opens them from a link", async () => {
+    const store = new MemoryStore();
+    const router = memoryRouter();
+    const assistant = new Assistant({ store, extractPages: async () => PAGES, check: fakeCheck, pause: async () => undefined });
+    const first = render(<Workspace store={store} assistant={assistant} user={AHK} router={router} />);
+    const view = within(first.container);
+    await createProject(view);
+    const projectId = [...store.projects.keys()][0]!;
+    expect(router.current()).toEqual({ projectId, chatId: null });
+    expect(view.getByRole("link", { name: /^El Rio ADU/ }).getAttribute("href")).toBe(`#/projects/${projectId}`);
+    expect(view.getByRole("heading", { level: 1, name: "El Rio ADU" })).toBeTruthy();
+
+    fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
+    await view.findByRole("heading", { level: 1, name: "Chat 1" });
+    const chatId = [...store.chats.values()][0]!.id;
+    expect(router.current()).toEqual({ projectId, chatId });
+
+    // The project name over the chat goes back to the project page.
+    fireEvent.click(view.getByRole("link", { name: "El Rio ADU" }));
+    expect(router.current()).toEqual({ projectId, chatId: null });
+    expect(await view.findByRole("heading", { level: 1, name: "El Rio ADU" })).toBeTruthy();
+
+    // A link opened in another browser lands on the same chat.
+    first.unmount();
+    const other = within(
+      render(<Workspace store={store} assistant={assistant} user={REZA} router={memoryRouter({ projectId, chatId })} />).container,
+    );
+    expect(await other.findByRole("heading", { level: 1, name: "Chat 1" })).toBeTruthy();
+
+    // Back and forward buttons move the open project.
+    const back = memoryRouter({ projectId, chatId });
+    cleanup();
+    const third = within(render(<Workspace store={store} assistant={assistant} user={AHK} router={back} />).container);
+    await third.findByRole("heading", { level: 1, name: "Chat 1" });
+    act(() => back.go({ projectId, chatId: null }));
+    expect(await third.findByRole("heading", { level: 1, name: "El Rio ADU" })).toBeTruthy();
+  });
+
+  it("says when a link points to a project that is not there", async () => {
+    const store = new MemoryStore();
+    const assistant = new Assistant({ store, extractPages: async () => PAGES, check: fakeCheck, pause: async () => undefined });
+    const view = within(
+      render(<Workspace store={store} assistant={assistant} user={AHK} router={memoryRouter({ projectId: "gone", chatId: null })} />).container,
+    );
+    expect(await view.findByRole("heading", { level: 1, name: "This project is not in the workspace" })).toBeTruthy();
   });
 
   it("shows slash commands in the composer", async () => {
@@ -85,11 +134,11 @@ describe("Workspace", () => {
 
     await createProject(ahk);
     // Reza sees the new project without reloading.
-    fireEvent.click(await reza.findByRole("button", { name: "El Rio ADU" }));
+    fireEvent.click(await reza.findByRole("link", { name: /^El Rio ADU/ }));
 
     fireEvent.click(ahk.getAllByRole("button", { name: "New chat" })[0]);
     await ahk.findByRole("heading", { level: 1, name: "Chat 1" });
-    fireEvent.click(await reza.findByRole("button", { name: "Chat 1" }));
+    fireEvent.click(within(await reza.findByRole("list", { name: "Chats in El Rio ADU" })).getByRole("link", { name: "Chat 1" }));
     await reza.findByRole("heading", { level: 1, name: "Chat 1" });
 
     // Ahk uploads the set. Reza sees the messages and the issue report.

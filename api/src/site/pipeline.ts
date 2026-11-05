@@ -24,6 +24,7 @@ import {
   seismicUrls,
 } from "./hazards";
 import { SourceError, getJson, sourceRef, type Fetch, type HttpOptions } from "./http";
+import { parseSection, sectionLines, sectionUrl } from "./terrain";
 import { STATIC_MAP, mapLinks, parseStreetViewMetadata, satelliteImages, streetViewMetadataUrl } from "./imagery";
 import {
   CITY_ZONING_MAPS,
@@ -240,7 +241,7 @@ export async function buildSiteReport(address: string, options: PipelineOptions 
   }, CGS_CHECK);
 
   // USGS first (the official source); Google Elevation only when USGS fails and the key is set.
-  const elevation = step<Elevation>(async (get) => {
+  const elevationPoint = async (get: Get): Promise<Outcome<Elevation>> => {
     let usgsError: SourceError;
     try {
       return { status: "ok", data: parseElevation(await get("USGS Elevation Point Query Service", elevationUrl(at), ELEVATION_HTTP)) };
@@ -258,6 +259,21 @@ export async function buildSiteReport(address: string, options: PipelineOptions 
       if (!(err instanceof SourceError)) throw err;
       throw new SourceError(`USGS failed (${bare(usgsError.message)}), and so did Google (${bare(err.message)}).`);
     }
+  };
+
+  // The terrain sections cut through the parcel outline, so they wait for the parcel step.
+  const elevation = step<Elevation>(async (get) => {
+    const [point, lot] = await Promise.all([elevationPoint(get), parcel]);
+    if (!key || !point.data) return point;
+    const lines = sectionLines(at, lot.data?.outline);
+    const read = await Promise.allSettled(lines.map(async (line) => parseSection(await get("Google Elevation API (terrain section)", sectionUrl(line, key)), line)));
+    const sections = read.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    const lost = read.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    const lostNote = lost
+      ? `The terrain sections could not be read (${lost.reason instanceof SourceError ? bare(lost.reason.message) : "unexpected error"}).`
+      : undefined;
+    const note = [point.note, lostNote].filter(Boolean).join(" ") || undefined;
+    return { ...point, data: sections.length > 0 ? { ...point.data, sections } : point.data, note };
   });
 
   const climateZone = step<ClimateZone>(async (get) => {

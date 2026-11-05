@@ -7,7 +7,8 @@ import { ChatApiError, type ChatApi } from "../lib/chatApi";
 import { checkSetFile, formatBytes, readHeader, type ProjectData } from "../lib/project";
 import { HELP_TEXT, applyChanges, hasChanges, readInstruction } from "./intent";
 import { issueReportMarkdown, issueReportTitle, progressiveParts, sheetSetMarkdown, sheetSetTitle } from "./report";
-import type { ArtifactKind, Message, WorkspaceArtifact, WorkspaceStore } from "./types";
+import { capPages, readDocument } from "./documents";
+import type { ArtifactKind, Message, MessageSource, WorkspaceArtifact, WorkspaceStore } from "./types";
 
 /** The name the generator writes under, in messages and artifact versions. */
 export const ASSISTANT_NAME = "arconstructive";
@@ -157,6 +158,21 @@ export class Assistant {
         kept = " The set is too large to keep for the team, so follow-up requests work only in this browser.";
       }
       this.sets.set(ctx.chatId, { setId, fileName: file.name, pages, project: ctx.project, result, file });
+      // The set joins the project's documents too, so any chat (and the assistant) can refer to it.
+      try {
+        const capped = capPages(pages);
+        await this.store.addDocument(ctx.projectId, {
+          file,
+          name: file.name,
+          contentType: file.type || "application/pdf",
+          uploadedBy: ctx.author,
+          pages: capped.pages,
+          chatId: ctx.chatId,
+          ...(capped.truncated ? { truncated: true } : {}),
+        });
+      } catch {
+        kept += " It is not in the project's documents: the file could not be stored.";
+      }
 
       const count = result.findings.length;
       await this.say(
@@ -257,10 +273,20 @@ export class Assistant {
   }
 
   /** A text message: Claude answers it; without the chat API, the keyword commands do. */
-  async send(ctx: ChatContext, text: string): Promise<void> {
+  /** Adds a file to the project's documents, with the text the assistant can read later. */
+  async addDocument(projectId: string, file: File, uploadedBy: string, chatId?: string): Promise<string> {
+    return this.store.addDocument(projectId, await readDocument(file, uploadedBy, this.extractPages, chatId));
+  }
+
+  async send(ctx: ChatContext, text: string, sources: MessageSource[] = []): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
-    await this.store.addMessage(ctx.projectId, ctx.chatId, { role: "user", text: trimmed, author: ctx.author });
+    await this.store.addMessage(ctx.projectId, ctx.chatId, {
+      role: "user",
+      text: trimmed,
+      author: ctx.author,
+      ...(sources.length ? { sources } : {}),
+    });
 
     if (this.chat) {
       await this.askClaude(ctx, this.chat);

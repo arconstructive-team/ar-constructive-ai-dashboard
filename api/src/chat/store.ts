@@ -15,12 +15,37 @@ export interface ChatProject {
   aduType: string;
 }
 
+/** A project document a team member attached to a message, by its source id ("doc:…" or "artifact:…"). */
+export interface MessageSource {
+  id: string;
+  name: string;
+}
+
 export interface StoredMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   author: string;
   artifactId?: string;
+  /** Project documents attached to this message with the Sources button. */
+  sources?: MessageSource[];
+}
+
+/** A file a team member uploaded to the project's documents (projects/{projectId}/documents). */
+export interface DocumentSummary {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  /** Pages (or parts) of readable text; 0 when the file has no text the assistant can read. */
+  pageCount: number;
+  uploadedBy: string;
+  /** true when only the first part of a very long file's text was kept. */
+  truncated?: boolean;
+}
+
+export interface DocumentText extends DocumentSummary {
+  pages: PageText[];
 }
 
 export interface StoredSet {
@@ -64,6 +89,12 @@ export interface ChatStore {
   latestSet(projectId: string, chatId: string): Promise<StoredSet | null>;
   /** The project's saved site report (projects/{projectId}/site/report), or null. */
   getSiteReport(projectId: string): Promise<SiteReport | null>;
+  /** The project's uploaded documents, newest first. */
+  listDocuments(projectId: string): Promise<DocumentSummary[]>;
+  /** One uploaded document with its text, or null. */
+  getDocument(projectId: string, documentId: string): Promise<DocumentText | null>;
+  /** Every artifact of the project, from all its chats, newest first. */
+  listProjectArtifacts(projectId: string): Promise<ArtifactDoc[]>;
   addMessage(projectId: string, chatId: string, message: NewMessage): Promise<string>;
   updateMessage(projectId: string, chatId: string, messageId: string, patch: MessagePatch): Promise<void>;
   getArtifact(projectId: string, artifactId: string): Promise<ArtifactDoc | null>;
@@ -101,6 +132,7 @@ export class MemoryChatStore implements ChatStore {
   chats = new Map<string, { messages: Array<StoredMessage & { streaming?: boolean }>; sets: StoredSet[] }>();
   artifacts = new Map<string, MemoryArtifact>();
   siteReports = new Map<string, SiteReport>();
+  documents = new Map<string, DocumentText & { projectId: string; order: number }>();
   private next = 0;
 
   private id(prefix: string): string {
@@ -122,9 +154,9 @@ export class MemoryChatStore implements ChatStore {
     this.projects.set(project.id, project);
   }
 
-  addUserMessage(projectId: string, chatId: string, author: string, text: string): string {
+  addUserMessage(projectId: string, chatId: string, author: string, text: string, sources?: MessageSource[]): string {
     const id = this.id("m");
-    this.chat(projectId, chatId).messages.push({ id, role: "user", text, author });
+    this.chat(projectId, chatId).messages.push({ id, role: "user", text, author, ...(sources ? { sources } : {}) });
     return id;
   }
 
@@ -145,7 +177,7 @@ export class MemoryChatStore implements ChatStore {
   async listMessages(projectId: string, chatId: string, limit: number) {
     return this.chat(projectId, chatId)
       .messages.slice(-limit)
-      .map(({ id, role, text, author, artifactId }) => ({ id, role, text, author, artifactId }));
+      .map(({ id, role, text, author, artifactId, sources }) => ({ id, role, text, author, artifactId, sources }));
   }
 
   async latestSet(projectId: string, chatId: string) {
@@ -155,6 +187,34 @@ export class MemoryChatStore implements ChatStore {
 
   async getSiteReport(projectId: string) {
     return this.siteReports.get(projectId) ?? null;
+  }
+
+  addDocument(projectId: string, doc: Omit<DocumentText, "id">): string {
+    const id = this.id("d");
+    this.documents.set(`${projectId}/${id}`, { ...doc, id, projectId, order: this.next });
+    return id;
+  }
+
+  async listDocuments(projectId: string) {
+    return [...this.documents.values()]
+      .filter((d) => d.projectId === projectId)
+      .sort((a, b) => b.order - a.order)
+      .map(({ pages: _p, projectId: _x, order: _o, ...summary }) => summary);
+  }
+
+  async getDocument(projectId: string, documentId: string) {
+    const d = this.documents.get(`${projectId}/${documentId}`);
+    if (!d) return null;
+    const { projectId: _x, order: _o, ...doc } = d;
+    return doc;
+  }
+
+  async listProjectArtifacts(projectId: string) {
+    return [...this.artifacts.entries()]
+      .filter(([key]) => key.startsWith(`${projectId}/`))
+      .map(([, a]) => a)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map(({ id, title, kind, status, content, version, chatId }) => ({ id, title, kind, status, content, version, chatId }));
   }
 
   async addMessage(projectId: string, chatId: string, message: NewMessage) {

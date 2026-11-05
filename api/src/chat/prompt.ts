@@ -1,5 +1,5 @@
 // The assistant's instructions and the project context it gets with every reply.
-import type { ArtifactDoc, ChatProject, StoredSet } from "./store";
+import type { ArtifactDoc, ChatProject, DocumentSummary, StoredSet } from "./store";
 
 /** The built-in system prompt. CHAT_SYSTEM_PROMPT replaces it without a code change. */
 export const SYSTEM_PROMPT = `You are the arconstructive assistant: an experienced permit-set coordinator who works inside a California architecture firm's shared workspace. The firm's architects and designers talk to you in a team chat; several people may write in the same chat, and each user message starts with the writer's name.
@@ -13,11 +13,13 @@ How you work:
 - Never invent a code section number, an ordinance number, a fee or a local rule. Cite a section only when you are sure it exists and says what you claim. When you are not sure, say so and say what the team should confirm and with whom (the building department, the planning desk, the fire district).
 - Local rules (height limits, setbacks, parking, design review) differ by city and change. Give the state baseline you are sure of, say that the local code can differ, and name the local document to check. Never state a local number as fact unless the project data, the uploaded set or a tool result shows it.
 - Use the tools when the question is about this project's set. Do not run a tool for a general question.
+- The project has a shared document library: files the team uploaded (survey, soils report, plan check comments, letters) and every artifact from all of the project's chats. They are listed under "Project documents". When a teammate attaches a document to a message, or a question depends on one, read it with read_project_document before you answer, and name the document and page you rely on.
 - After run_permit_check or regenerate_sheets, summarize the result in a few lines: the count, the most serious issues, and what to do next. The full document is on the canvas.
 - Put any long document (more than a short answer) on the canvas with create_or_update_artifact instead of in the chat. To edit a document that already exists, pass its artifact_id: that saves a new version.
 - The architect of record makes every decision and signs the sheets. You never stamp or sign anything, and you never edit vendor or consultant documents (survey, Title 24 report, structural vendor sheets, soils report).`;
 
 const MAX_INDEX_PAGES = 120;
+const MAX_DOCUMENTS = 60;
 
 /** Facts about this project and chat, added after the system prompt on every reply. */
 export function projectContext(input: {
@@ -25,6 +27,9 @@ export function projectContext(input: {
   set: StoredSet | null;
   sheetIndex: Array<{ page: number; sheet: string | null; title: string | null }>;
   artifacts: ArtifactDoc[];
+  /** The project's uploaded files and all its artifacts (from every chat). */
+  documents?: DocumentSummary[];
+  projectArtifacts?: ArtifactDoc[];
   today: string;
 }): string {
   const { project, set, sheetIndex, artifacts, today } = input;
@@ -61,6 +66,22 @@ export function projectContext(input: {
     for (const a of artifacts) {
       lines.push(`- ${a.title} (artifact_id ${a.id}, ${a.kind}, version ${a.version}, ${a.status})`);
     }
+  }
+  lines.push("");
+  lines.push("## Project documents (read one with read_project_document and its source id)");
+  const uploads = input.documents ?? [];
+  const others = (input.projectArtifacts ?? []).filter((a) => !artifacts.some((c) => c.id === a.id));
+  if (uploads.length === 0 && others.length === 0 && artifacts.length === 0) {
+    lines.push("None yet. The team adds files on the project's Documents page.");
+  } else {
+    for (const d of uploads.slice(0, MAX_DOCUMENTS)) {
+      const readable = d.pageCount > 0 ? `${d.pageCount} ${d.pageCount === 1 ? "page" : "pages"} of text${d.truncated ? ", text cut short" : ""}` : "no readable text";
+      lines.push(`- ${d.name} (source id doc:${d.id}, uploaded by ${d.uploadedBy || "a teammate"}, ${readable})`);
+    }
+    for (const a of [...artifacts, ...others].slice(0, MAX_DOCUMENTS)) {
+      lines.push(`- ${a.title} (source id artifact:${a.id}, ${a.kind}, version ${a.version})`);
+    }
+    if (uploads.length > MAX_DOCUMENTS) lines.push(`- … and ${uploads.length - MAX_DOCUMENTS} more uploaded files`);
   }
   return lines.join("\n");
 }

@@ -78,7 +78,11 @@ export function stepFacts(report: SiteReport, name: StepName): string | null {
     }
     case "elevation": {
       const e = s.elevation.data;
-      return e ? `${e.feet} ft above sea level` : null;
+      if (!e) return null;
+      const across = (e.sections ?? []).map(
+        (t) => `${t.axis === "west-east" ? "west–east" : "south–north"} the ground falls ${t.slopePercent}% toward the ${t.downhill}`,
+      );
+      return `${e.feet} ft above sea level${across.length ? `; across the ${e.sections?.some((t) => t.lot) ? "lot" : "site"}: ${across.join(", ")}` : ""}`;
     }
     case "climateZone": {
       const c = s.climateZone.data;

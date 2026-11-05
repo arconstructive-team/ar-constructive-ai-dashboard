@@ -152,8 +152,26 @@ export interface SeismicZones {
   faultZone: boolean;
 }
 
+/** The ground along one line cut through the lot, like a site section. */
+export interface TerrainSection {
+  axis: "west-east" | "south-north";
+  lengthFeet: number;
+  /** Ground height (ft above sea level) every few feet from the line's west or south end. */
+  points: { distanceFeet: number; feet: number }[];
+  /** Where the line crosses the lot lines (feet from its start); missing without a parcel outline. */
+  lot?: { startFeet: number; endFeet: number };
+  lowFeet: number;
+  highFeet: number;
+  /** Average slope across the lot (or the whole line without one), percent. */
+  slopePercent: number;
+  /** The direction the ground falls along this line. */
+  downhill: "west" | "east" | "south" | "north";
+}
+
 export interface Elevation {
   feet: number;
+  /** West–east and south–north sections through the lot (Google Elevation API; needs the key). */
+  sections?: TerrainSection[];
 }
 
 export interface ClimateZone {
