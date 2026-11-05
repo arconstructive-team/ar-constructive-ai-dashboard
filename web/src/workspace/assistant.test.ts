@@ -39,7 +39,21 @@ async function setup(extractPages = async () => PAGES) {
 }
 
 describe("Assistant", () => {
-  it("checks an uploaded PDF and writes the issue report a part at a time", async () => {
+  it("reads an uploaded PDF, keeps it for the team and asks what to do, without writing a report", async () => {
+    const { store, chatId, assistant, ctx } = await setup();
+    await assistant.upload(ctx(), pdfFile());
+
+    expect(store.artifacts.size).toBe(0);
+    expect(store.sets.get(chatId)?.[0].pages).toEqual(PAGES);
+    const messages = store.messages.get(chatId) ?? [];
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(messages[0]).toMatchObject({ author: "Ahk", text: expect.stringContaining("Uploaded 428-el-rio.pdf") });
+    expect(messages[1].text).toContain("I read 428-el-rio.pdf (2 pages) and kept it for the team");
+    expect(messages[1].text).toContain("What do you want to do with it?");
+    expect(messages[1].text).toContain('write "check the set"');
+  });
+
+  it("checks the set when asked and writes the issue report a part at a time", async () => {
     const { store, chatId, assistant, ctx, statuses } = await setup();
     const contents: string[] = [];
     const update = store.updateArtifact.bind(store);
@@ -49,6 +63,7 @@ describe("Assistant", () => {
     };
 
     await assistant.upload(ctx(), pdfFile());
+    await assistant.send(ctx(), "check the set");
 
     const [report] = [...store.artifacts.values()];
     expect(report).toMatchObject({ kind: "issue_report", status: "ready", version: 1, chatId, updatedBy: ASSISTANT_NAME });
@@ -61,10 +76,18 @@ describe("Assistant", () => {
     expect(store.versions.get(report.id)?.map((v) => v.version)).toEqual([1]);
 
     const messages = store.messages.get(chatId) ?? [];
-    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
-    expect(messages[0]).toMatchObject({ author: "Ahk", text: expect.stringContaining("Uploaded 428-el-rio.pdf") });
-    expect(messages[2]).toMatchObject({ artifactId: report.id, text: expect.stringContaining("found 1 issue in 2 pages") });
-    expect(store.sets.get(chatId)?.[0].pages).toEqual(PAGES);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(messages[3]).toMatchObject({ artifactId: report.id, text: expect.stringContaining("found 1 issue in 2 pages") });
+  });
+
+  it("keeps new project data without writing a report nobody asked for", async () => {
+    const { store, chatId, assistant, ctx } = await setup();
+    await assistant.upload(ctx(), pdfFile());
+    await assistant.send(ctx(), "this is an attached ADU");
+
+    expect(store.artifacts.size).toBe(0);
+    expect((store.messages.get(chatId) ?? []).at(-1)?.text).toContain("I changed the ADU type to Attached ADU.");
+    expect(store.sets.get(chatId)?.[0].project.aduType).toBe("Attached ADU");
   });
 
   it("regenerates the sheets as a sheet set artifact", async () => {
@@ -82,6 +105,7 @@ describe("Assistant", () => {
   it("writes a follow-up as a new version of the same artifact", async () => {
     const { store, assistant, ctx } = await setup();
     await assistant.upload(ctx(), pdfFile());
+    await assistant.send(ctx(), "check the set");
     const [report] = [...store.artifacts.values()];
 
     await assistant.send(ctx(), "check it as Danville");
@@ -103,7 +127,7 @@ describe("Assistant", () => {
     const sheets = [...store.artifacts.values()].find((a) => a.kind === "sheet_set");
     expect(sheets).toMatchObject({ version: 2, status: "ready" });
     expect(sheets?.content).toContain("All work shall comply with the Town of Danville code.");
-    expect(store.artifacts.size).toBe(2);
+    expect(store.artifacts.size).toBe(1);
   });
 
   it("lets another team member continue from the set stored in the chat", async () => {
@@ -113,7 +137,7 @@ describe("Assistant", () => {
     const otherBrowser = new Assistant({ store, check: fakeCheck, pause: async () => undefined });
     await otherBrowser.send(ctx(RD.name), "regenerate the sheets");
 
-    expect([...store.artifacts.values()].map((a) => a.kind)).toEqual(["issue_report", "sheet_set"]);
+    expect([...store.artifacts.values()].map((a) => a.kind)).toEqual(["sheet_set"]);
     expect(store.messages.get(chatId)?.find((m) => m.author === "Reza")?.text).toBe("regenerate the sheets");
   });
 
@@ -127,16 +151,39 @@ describe("Assistant", () => {
     expect(store.artifacts.size).toBe(0);
   });
 
-  it("sets status error when the work fails", async () => {
-    const { store, assistant, ctx, chatId, statuses } = await setup(async () => {
+  it("says why when the PDF cannot be read", async () => {
+    const { store, assistant, ctx, chatId } = await setup(async () => {
       throw new Error("The PDF has no text layer.");
     });
     await assistant.upload(ctx(), pdfFile());
 
+    expect(store.artifacts.size).toBe(0);
+    expect((store.messages.get(chatId) ?? []).at(-1)?.text).toBe("I could not read 428-el-rio.pdf. The PDF has no text layer.");
+  });
+
+  it("sets status error when writing the report fails", async () => {
+    const { store, assistant, ctx, chatId, statuses } = await setup();
+    await assistant.upload(ctx(), pdfFile());
+    store.commitVersion = async () => {
+      throw new Error("The database is offline.");
+    };
+    await assistant.send(ctx(), "check the set");
+
     const [report] = [...store.artifacts.values()];
-    expect(report).toMatchObject({ status: "error", error: "The PDF has no text layer.", version: 0 });
+    expect(report).toMatchObject({ status: "error", error: "The database is offline.", version: 0 });
     expect(statuses.get(report.id)).toEqual(["generating", "error"]);
-    expect((store.messages.get(chatId) ?? []).at(-1)?.text).toBe("The work stopped: The PDF has no text layer.");
+    expect((store.messages.get(chatId) ?? []).at(-1)?.text).toBe("The work stopped: The database is offline.");
+  });
+
+  it("still answers when the file cannot be stored in the documents", async () => {
+    const { store, assistant, ctx, chatId } = await setup();
+    store.addDocument = async () => {
+      throw new Error("storage/retry-limit-exceeded");
+    };
+    await assistant.upload(ctx(), pdfFile());
+    const last = (store.messages.get(chatId) ?? []).at(-1)?.text ?? "";
+    expect(last).toContain("What do you want to do with it?");
+    expect(last).toContain("the file could not be stored");
   });
 
   it("refuses a file that is not a PDF", async () => {
@@ -216,14 +263,22 @@ describe("Assistant with Claude (the chat API)", () => {
     expect((store.messages.get(chatId) ?? []).map((m) => m.role)).toEqual(["user"]);
   });
 
-  it("keeps the upload in the browser and saves the set for Claude", async () => {
+  it("saves the uploaded set, then lets Claude say what it is and ask what to work on", async () => {
     const store = new MemoryStore();
-    const { chat, calls } = fakeChat(store, () => "unused");
-    const { assistant, ctx, chatId } = await setupWith(store, chat);
+    let setWhenAsked: unknown = null;
+    const { chat, calls } = fakeChat(store, (target) => {
+      setWhenAsked = store.sets.get(target.chatId)?.[0]?.fileName ?? null;
+      return "This is a 2-sheet set for 428 El Rio Rd. What do you want to work on first?";
+    });
+    const { assistant, ctx, chatId, projectId } = await setupWith(store, chat);
     await assistant.upload(ctx(), pdfFile());
-    expect(calls).toHaveLength(0);
-    expect(store.sets.get(chatId)?.[0].pages).toEqual(PAGES);
-    expect([...store.artifacts.values()][0]).toMatchObject({ kind: "issue_report", status: "ready" });
+
+    expect(calls).toEqual([{ projectId, chatId }]);
+    // Claude reads the set from the chat, so it is saved before Claude is asked.
+    expect(setWhenAsked).toBe("428-el-rio.pdf");
+    // The browser writes no report: the team chooses the work.
+    expect(store.artifacts.size).toBe(0);
+    expect((store.messages.get(chatId) ?? []).map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 
   async function setupWith(store: MemoryStore, chat: ChatApi) {

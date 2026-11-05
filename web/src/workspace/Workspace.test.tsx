@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Assistant } from "./assistant";
 import { MemoryStore } from "./memoryStore";
 import { Workspace } from "./Workspace";
@@ -143,7 +143,8 @@ describe("Workspace", () => {
     fireEvent.change(message, { target: { value: "/" } });
     const commands = within(view.getByRole("list", { name: "Commands" }));
     expect(commands.getAllByRole("button").map((b) => b.textContent)).toEqual([
-      "/check Upload a permit set PDF and check it",
+      "/upload Upload a permit set PDF to work on",
+      "/check Check the set and write an issue report",
       "/regenerate Regenerate the cover data and notes sheets",
       "/help What I can do in this chat",
     ]);
@@ -164,8 +165,11 @@ describe("Workspace", () => {
     fireEvent.click(within(await reza.findByRole("list", { name: "Chats in El Rio ADU" })).getByRole("link", { name: /^Chat 1\b/ }));
     await reza.findByRole("heading", { level: 1, name: "Chat 1" });
 
-    // Ahk uploads the set. Reza sees the messages and the issue report.
+    // Ahk uploads the set and the assistant asks what to do. Ahk asks for the check; Reza sees the report.
     fireEvent.change(ahk.getByLabelText("Permit set PDF"), { target: { files: [pdfFile()] } });
+    expect(await reza.findByText(/What do you want to do with it\?/)).toBeTruthy();
+    expect(store.artifacts.size).toBe(0);
+    await askForCheck(ahk);
     expect(await reza.findByText(/The check found 1 issue in 2 pages/)).toBeTruthy();
     expect(await reza.findByRole("heading", { level: 1, name: "Issue report: 428 El Rio Rd, Danville" })).toBeTruthy();
     expect(reza.getByText("Version 1")).toBeTruthy();
@@ -202,6 +206,7 @@ describe("Workspace", () => {
     await createProject(view);
     fireEvent.click(view.getAllByRole("button", { name: "New chat" })[0]);
     fireEvent.change(await view.findByLabelText("Permit set PDF"), { target: { files: [pdfFile()] } });
+    await askForCheck(view);
     await view.findByText(/The check found 1 issue in 2 pages/);
 
     const message = view.getByLabelText("Message");
@@ -214,3 +219,13 @@ describe("Workspace", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "Regenerated sheets: 428 EL RIO RD, DANVILLE" })).toBeNull();
   });
 });
+
+/** After an upload the assistant asks what to do: this answers with /check, for the issue report. */
+async function askForCheck(view: Pick<ReturnType<typeof render>, "findByText" | "getByRole" | "getByLabelText">) {
+  await view.findByText(/What do you want to do with it\?/);
+  const message = view.getByLabelText("Message");
+  // The upload is done when + can be used again.
+  await waitFor(() => expect((view.getByRole("button", { name: "Upload a permit set PDF" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(message, { target: { value: "/check" } });
+  fireEvent.keyDown(message, { key: "Enter" });
+}

@@ -63,6 +63,18 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
+/** What the keyword assistant says after an upload: what it read, and the work it can start. */
+export function uploadedText(fileName: string, pages: PageText[], project: ProjectData): string {
+  const count = `${pages.length} ${pages.length === 1 ? "page" : "pages"}`;
+  return (
+    `I read ${fileName} (${count}) and kept it for the team, so any chat in this project can work on it. ` +
+    "What do you want to do with it?\n" +
+    `1. Check it: write "check the set". I write an issue report${project.jurisdiction ? ` for ${project.jurisdiction}` : ""}.\n` +
+    "2. Regenerate the sheets: write \"regenerate the sheets\". I write the cover data and notes sheets.\n" +
+    "3. Change the project data first: name a jurisdiction (\"it is in San Ramon\"), an ADU type (\"attached ADU\") or \"the address is …\"."
+  );
+}
+
 export class Assistant {
   private readonly store: WorkspaceStore;
   private readonly chat: ChatApi | undefined;
@@ -109,7 +121,11 @@ export class Assistant {
     await this.say(ctx, `The work stopped: ${message}`, artifactId);
   }
 
-  /** Uploading a PDF in the chat: check it and write an issue report. */
+  /**
+   * Uploading a PDF in the chat: read it and keep it for the team, then ask what to work on.
+   * The upload starts the work on the set, it does not choose the work: the issue report is one
+   * task the team can pick, next to the sheets, notes, letters and plan check responses.
+   */
   async upload(ctx: ChatContext, file: File): Promise<void> {
     await this.store.addMessage(ctx.projectId, ctx.chatId, {
       role: "user",
@@ -127,63 +143,49 @@ export class Assistant {
       await this.say(ctx, problem);
       return;
     }
-    if (!ctx.project.jurisdiction) {
-      await this.say(ctx, "This project has no jurisdiction yet. Name one, for example \"check it as Danville\", then upload the set again.");
+
+    let pages: PageText[];
+    try {
+      pages = await this.extractPages(file);
+    } catch (err) {
+      await this.say(ctx, `I could not read ${file.name}. ${errorText(err, "Check that the PDF opens in a PDF reader, then upload it again.")}`);
       return;
     }
 
-    const title = issueReportTitle(ctx.project);
-    const artifactId = await this.store.createArtifact(ctx.projectId, {
-      title,
-      kind: "issue_report",
-      chatId: ctx.chatId,
-      updatedBy: ASSISTANT_NAME,
-      content: `# ${title}\n\nReading ${file.name}…\n`,
-    });
-    await this.say(ctx, `I am checking ${file.name} as ${ctx.project.jurisdiction}. The issue report fills in on the right as I write it.`, artifactId);
-
+    let setId: string | null = null;
+    let kept = "";
     try {
-      const pages = await this.extractPages(file);
-      await this.store.updateArtifact(ctx.projectId, artifactId, {
-        content: `# ${title}\n\nRead ${pages.length} pages. Running the rules…\n`,
-      });
-      const result = this.check(pages, ctx.project);
-      const version = await this.write(ctx, artifactId, title, issueReportMarkdown(result, ctx.project, file.name));
-
-      let setId: string | null = null;
-      let kept = "";
-      try {
-        setId = await this.store.saveSet(ctx.projectId, ctx.chatId, { fileName: file.name, pages, project: ctx.project });
-      } catch {
-        kept = " The set is too large to keep for the team, so follow-up requests work only in this browser.";
-      }
-      this.sets.set(ctx.chatId, { setId, fileName: file.name, pages, project: ctx.project, result, file });
-      // The set joins the project's documents too, so any chat (and the assistant) can refer to it.
-      try {
-        const capped = capPages(pages);
-        await this.store.addDocument(ctx.projectId, {
-          file,
-          name: file.name,
-          contentType: file.type || "application/pdf",
-          uploadedBy: ctx.author,
-          pages: capped.pages,
-          chatId: ctx.chatId,
-          ...(capped.truncated ? { truncated: true } : {}),
-        });
-      } catch {
-        kept += " It is not in the project's documents: the file could not be stored.";
-      }
-
-      const count = result.findings.length;
-      await this.say(
-        ctx,
-        `The check found ${count} ${count === 1 ? "issue" : "issues"} in ${result.pages.length} pages (version ${version}). ` +
-          `Write "regenerate the sheets" for new cover data and notes sheets.${kept}`,
-        artifactId,
-      );
-    } catch (err) {
-      await this.fail(ctx, artifactId, errorText(err, "The check failed. Check that the PDF opens in a PDF reader, then upload it again."));
+      setId = await this.store.saveSet(ctx.projectId, ctx.chatId, { fileName: file.name, pages, project: ctx.project });
+    } catch {
+      kept = " The set is too large to keep for the team, so follow-up requests work only in this browser.";
     }
+    this.sets.set(ctx.chatId, { setId, fileName: file.name, pages, project: ctx.project, result: this.check(pages, ctx.project), file });
+
+    // The set joins the project's documents too, so later chats (and the assistant) can pick up the work.
+    // The reply does not wait for the file: a slow or failing upload never holds up the chat.
+    const stored = (async () => {
+      const capped = capPages(pages);
+      await this.store.addDocument(ctx.projectId, {
+        file,
+        name: file.name,
+        contentType: file.type || "application/pdf",
+        uploadedBy: ctx.author,
+        pages: capped.pages,
+        chatId: ctx.chatId,
+        ...(capped.truncated ? { truncated: true } : {}),
+      });
+    })().then(
+      () => "",
+      () => " It is not in the project's documents yet: the file could not be stored.",
+    );
+
+    if (this.chat) {
+      await this.askClaude(ctx, this.chat);
+      const note = kept + (await stored);
+      if (note) await this.say(ctx, note.trim());
+      return;
+    }
+    await this.say(ctx, uploadedText(file.name, pages, ctx.project) + kept + (await stored));
   }
 
   private async loadSet(ctx: ChatContext): Promise<ChatSet | null> {
@@ -302,7 +304,7 @@ export class Assistant {
     }
 
     const instruction = readInstruction(trimmed, set?.result.jurisdiction?.detected ?? null);
-    const wantsWork = instruction.regenerate || hasChanges(instruction);
+    const wantsWork = instruction.regenerate || instruction.check || hasChanges(instruction);
     if (!set) {
       await this.say(ctx, wantsWork ? "Upload the permit set PDF here first: select + and choose the file. Then ask again." : HELP_TEXT);
       return;
@@ -328,6 +330,11 @@ export class Assistant {
         await this.store.updateSetProject(ctx.projectId, ctx.chatId, next.setId, project).catch(() => undefined);
       }
 
+      // Nothing written yet and no task asked for: keep the new data and ask, do not assume a report.
+      if (artifacts.length === 0 && !instruction.check && !instruction.regenerate) {
+        await this.say(ctx, `I changed the ${said.join(" and the ")}. Write "check the set" for an issue report, or "regenerate the sheets".`);
+        return;
+      }
       // The follow-up edits the artifact the message is about: the sheets, or the open artifact.
       const target =
         instruction.regenerate || instruction.aboutSheets
@@ -342,6 +349,23 @@ export class Assistant {
         `I changed the ${said.join(" and the ")} and checked the set again: ${count} ${count === 1 ? "issue" : "issues"}. ` +
           `${done.title} is now version ${done.version}.`,
         done.artifactId,
+      );
+      return;
+    }
+
+    if (!instruction.regenerate) {
+      if (!set.project.jurisdiction) {
+        await this.say(ctx, "This project has no jurisdiction yet. Name one, for example \"check it as Danville\".");
+        return;
+      }
+      const report = await this.writeKind(ctx, "issue_report", latestOf("issue_report"), set);
+      if (!report) return;
+      const count = set.result.findings.length;
+      await this.say(
+        ctx,
+        `The check found ${count} ${count === 1 ? "issue" : "issues"} in ${set.result.pages.length} pages (version ${report.version}). ` +
+          `Write "regenerate the sheets" for new cover data and notes sheets.`,
+        report.artifactId,
       );
       return;
     }

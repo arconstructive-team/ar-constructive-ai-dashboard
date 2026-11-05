@@ -5,6 +5,8 @@ import { JURISDICTIONS, type AduType, type Jurisdiction, type ProjectData } from
 export interface Instruction {
   /** "Regenerate the sheets": write the sheet set artifact. */
   regenerate: boolean;
+  /** "Check the set": run the permit check and write the issue report. */
+  check: boolean;
   /** Project data to change before the set is checked again. */
   changes: Partial<ProjectData>;
   /** The message talks about the sheets, so a follow-up edits the sheet set first. */
@@ -29,6 +31,7 @@ const ADU_WORDS: Array<[AduType, RegExp]> = [
 
 const REGENERATE = /\b(re-?generate|re-?generating|regeneration|redo|rewrite|redraw|re-?write)\b/i;
 const MAKE_SHEETS = /\b(make|create|generate|build|write|draft)\b[^.]*\b(sheets?|cover|general notes|calgreen)\b/i;
+const CHECK = /\b(check|re-?check|review|issue report|issues|plan check)\b/i;
 const SHEET_WORDS = /\b(sheets?|cover|notes|calgreen|a-0\.\d)\b/i;
 const FIX_JURISDICTION = /\bjurisdiction\b/i;
 const FIX_WORDS = /\b(fix|correct|wrong|right|update|change)\b/i;
@@ -57,6 +60,7 @@ export function readInstruction(text: string, detected: string | null): Instruct
 
   return {
     regenerate: REGENERATE.test(text) || MAKE_SHEETS.test(text),
+    check: CHECK.test(text),
     changes,
     aboutSheets: SHEET_WORDS.test(text),
   };
@@ -78,7 +82,8 @@ export function applyChanges(project: ProjectData, changes: Partial<ProjectData>
 
 export const HELP_TEXT =
   "I can do these things in this chat:\n" +
-  "1. Check a permit set: select + and choose the PDF. I write an issue report.\n" +
+  "1. Work on a permit set: select + and choose the PDF. I read it, keep it for the team and ask what to do with it.\n" +
+  "   Write \"check the set\" for an issue report.\n" +
   "2. Regenerate the sheets: write \"regenerate the sheets\". I write the cover data and notes sheets.\n" +
   "3. Change the project and check again: name a jurisdiction (\"check it as San Ramon\"), an ADU type (\"detached ADU\") or \"the address is …\". " +
   "I write a new version of the open artifact.\n" +
