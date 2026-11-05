@@ -3,6 +3,8 @@ import { classifyPages } from "./classify";
 import { regenerateSheets } from "./regenerate";
 import { getPack } from "./packs";
 import { findFirst } from "./text";
+import { citationsFor } from "./citations";
+import { detectJurisdiction } from "./jurisdiction";
 import {
   areaRules,
   codeYearRules,
@@ -19,6 +21,19 @@ export { classifyPages, parseSheetIndex, readTitleBlock } from "./classify";
 export { DANVILLE_2025, getPack } from "./packs";
 export { itemsToText } from "./text";
 export { coverAreas } from "./rules";
+export { RULE_CITATIONS, citationIds, citationsFor } from "./citations";
+export { CITY_PATTERNS, detectJurisdiction, jurisdictionIn } from "./jurisdiction";
+export {
+  CODE_LIBRARY,
+  TEXT_ALLOWED_CODES,
+  cite,
+  getCodePack,
+  getSection,
+  groupLibrary,
+  hasSection,
+  validateLibrary,
+  type LibraryGroup,
+} from "./library";
 export { REGENERATED_SHEETS, readProjectFacts, regenerateSheets, regeneratedPdf, regeneratedPdfDataUrl } from "./regenerate";
 export { layoutSheet, layoutText, writePdf, toBase64 } from "./pdf";
 
@@ -79,7 +94,9 @@ export function runEngine(input: PageText[], options: EngineOptions = {}): Engin
     ...titleBlockRules(ctx),
     ...dateRules(ctx),
     ...tp.findings,
-  ].sort(
+  ]
+    .map((f) => ({ ...f, citations: citationsFor(f.rule_id, ctx.pack) }))
+    .sort(
     (a, b) =>
       (a.pages[0] ?? 0) - (b.pages[0] ?? 0) ||
       SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] ||
@@ -105,6 +122,7 @@ export function runEngine(input: PageText[], options: EngineOptions = {}): Engin
     findings,
     missing: [...xr.missing, ...tp.missing],
     counts,
+    jurisdiction: detectJurisdiction(ctx.pages, ctx.cover, options.jurisdiction || ctx.pack.jurisdiction),
   };
 }
 
@@ -126,7 +144,18 @@ export function groupBySheet(findings: Finding[]): SheetGroup[] {
   return [...groups.values()].sort((a, b) => (a.page ?? 1e9) - (b.page ?? 1e9));
 }
 
-const CSV_COLUMNS = ["sheet", "rule_id", "family", "severity", "title", "sheets", "pages", "evidence", "suggested_fix"];
+const CSV_COLUMNS = [
+  "sheet",
+  "rule_id",
+  "family",
+  "severity",
+  "title",
+  "sheets",
+  "pages",
+  "evidence",
+  "suggested_fix",
+  "code_sections",
+];
 
 function csvCell(value: string): string {
   return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
@@ -145,6 +174,7 @@ export function toCsv(findings: Finding[]): string {
       f.pages.join("; "),
       f.evidence,
       f.suggested_fix,
+      (f.citations ?? []).map((c) => `${c.label} <${c.source_url}>`).join("; "),
     ].map(csvCell).join(","),
   );
   return [CSV_COLUMNS.join(","), ...rows].join("\r\n") + "\r\n";

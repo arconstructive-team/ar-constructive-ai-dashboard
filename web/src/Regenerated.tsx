@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Download, FileWarning } from "lucide-react";
 import { regeneratedPdfDataUrl, type CheckResult, type Finding, type RegeneratedSheet } from "./lib/engine";
+import { CodeSections } from "./CodeSections";
 
 const focusRing =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
@@ -182,6 +183,16 @@ export function RegeneratedSheets(props: {
               {sheet.job ? ` · job ${sheet.job}` : ""} · {sheet.address.join(" ")}
             </p>
           </div>
+          {sheet.citations && sheet.citations.length > 0 && (
+            <details className="text-sm">
+              <summary className={`cursor-pointer font-medium ${focusRing}`}>
+                Code sections on this sheet ({sheet.citations.length})
+              </summary>
+              <div className="mt-2">
+                <CodeSections citations={sheet.citations} label={`Code sections cited on ${sheet.sheet}`} />
+              </div>
+            </details>
+          )}
           {fixed.length > 0 && (
             <div className="flex items-start gap-2 border-l-4 border-success pl-3">
               <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0 text-success" strokeWidth={1.5} />

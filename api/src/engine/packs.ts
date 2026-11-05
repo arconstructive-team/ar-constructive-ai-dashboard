@@ -53,11 +53,21 @@ export const DANVILLE_2025: JurisdictionPack = {
   allowedJurisdictions: ["Town of Danville"],
   allowedAgencies: ["San Ramon Valley Fire Protection District"],
   fireAgency: "San Ramon Valley Fire Protection District (SRVFPD)",
-  localCodeNames: [
-    "Danville Municipal Code",
-    "Danville Municipal Code chapter 32 (zoning)",
-    "Danville Municipal Code chapter 6-17 (tree protection)",
-  ],
+  codePacks: ["ca-2025", "danville-2025"],
+  // Danville Municipal Code entries in the code library (library/data.ts).
+  local: {
+    code: "DMC",
+    building: "DMC-10-1",
+    residential: "DMC-10-2",
+    electrical: "DMC-10-3",
+    fire: "DMC-10-6",
+    green: "DMC-10-7",
+    energy: "DMC-10-14",
+    existing: "DMC-10-19",
+    wui: "DMC-10-20",
+    adu: "DMC-32-76",
+    trees: "DMC-32-79",
+  },
 };
 
 const FIRE_BY_JURISDICTION: Record<string, string> = {
@@ -81,6 +91,8 @@ export function getPack(jurisdiction?: string): JurisdictionPack {
     allowedJurisdictions: [jurisdiction],
     allowedAgencies: fire ? [fire] : [],
     fireAgency: fire ?? "the local fire authority",
-    localCodeNames: [],
+    // The library has no municipal code entries for this jurisdiction yet: state sections only.
+    codePacks: ["ca-2025"],
+    local: {},
   };
 }

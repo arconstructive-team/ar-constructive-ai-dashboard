@@ -245,7 +245,7 @@ describe("results", () => {
     expect(groups.map((g) => g.sheet)).toEqual(["A-2.1"]);
     expect(groups[0].findings.map((f) => f.rule_id)).toEqual(["JB-001", "CY-001"]);
     const csv = toCsv(result.findings);
-    expect(csv.split("\r\n")[0]).toBe("sheet,rule_id,family,severity,title,sheets,pages,evidence,suggested_fix");
+    expect(csv.split("\r\n")[0]).toBe("sheet,rule_id,family,severity,title,sheets,pages,evidence,suggested_fix,code_sections");
     expect(csv.split("\r\n")).toHaveLength(4);
     expect(result.counts).toMatchObject({ JB: 1, CY: 1, AR: 0 });
   });

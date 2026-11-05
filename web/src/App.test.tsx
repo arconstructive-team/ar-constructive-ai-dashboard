@@ -4,7 +4,10 @@ import { App } from "./App";
 import type { CheckSet } from "./lib/check";
 import type { EngineResult } from "./lib/engine";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.location.hash = "";
+});
 
 function fileInput(container: HTMLElement): HTMLInputElement {
   const input = container.querySelector<HTMLInputElement>("#set-file");
@@ -57,6 +60,18 @@ describe("Check a permit set screen", () => {
     expect(within(a02).getByText("JB-001")).toBeTruthy();
     expect(within(a02).getByText(/CITY OF LAFAYETTE BUILDING DIVISION/)).toBeTruthy();
     expect(within(a02).getByText(/Replace the Lafayette notes/)).toBeTruthy();
+
+    // Each finding lists its code sections with a link to the official source.
+    const sections = within(a02).getByRole("list", { name: "Code sections" });
+    expect(within(sections).getByText("CRC Section R106.1.1")).toBeTruthy();
+    const link = within(sections).getByRole("link", { name: /Official source for CRC Section R106\.1\.1/ });
+    expect(link.getAttribute("href")).toBe("https://codes.iccsafe.org/content/CARC2025P2");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(within(sections).getByRole("link", { name: /Danville Municipal Code/ }).getAttribute("href")).toMatch(
+      /^https:\/\/codelibrary\.amlegal\.com\//,
+    );
+    // No jurisdiction warning when the set names the selected jurisdiction.
+    expect(screen.queryByText(/but you checked it as/)).toBeNull();
     const a23 = screen.getByRole("region", { name: /A-2\.3/ });
     expect(within(a23).getByText("Medium")).toBeTruthy();
     expect(within(a23).getByText("Low")).toBeTruthy();
@@ -81,6 +96,47 @@ describe("Check a permit set screen", () => {
     expect(screen.getByText("Drop the permit set here, or choose a file")).toBeTruthy();
   });
 
+  it("warns when the set names another jurisdiction, and checks it again as that one", async () => {
+    const mismatch: EngineResult = {
+      ...FAKE_RESULT,
+      pack: "california-2025-base",
+      pack_name: "City of Walnut Creek, 2025 California codes (base pack)",
+      jurisdiction: {
+        selected: "City of Walnut Creek",
+        detected: "Town of Danville",
+        evidence: "PROJECT ADDRESS: 428 EL RIO RD, DANVILLE, 94526",
+        sheet: "A-0.1",
+        page: 1,
+        matches: false,
+      },
+    };
+    const checkSet = vi.fn<CheckSet>(async (_file, project) =>
+      project.jurisdiction === "Town of Danville" ? FAKE_RESULT : mismatch,
+    );
+    const { container } = render(<App checkSet={checkSet} />);
+    await fillAndUpload(container, "City of Walnut Creek");
+    startCheck();
+
+    const warning = await screen.findByText("This set is for Town of Danville, but you checked it as City of Walnut Creek.");
+    expect(warning).toBeTruthy();
+    expect(screen.getByText(/PROJECT ADDRESS: 428 EL RIO RD, DANVILLE, 94526/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check again as Town of Danville" }));
+    expect(await screen.findByRole("heading", { name: "3 issues found" })).toBeTruthy();
+    expect(checkSet).toHaveBeenCalledTimes(2);
+    expect(checkSet.mock.calls[1][1].jurisdiction).toBe("Town of Danville");
+    expect(screen.queryByText(/but you checked it as/)).toBeNull();
+  });
+
+  it("opens the code library from the header", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("link", { name: "Code library" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Code library" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Code library" }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(screen.getByRole("link", { name: "New check" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Check a permit set before you submit it" })).toBeTruthy();
+  });
+
   it("says what happened when the check fails", async () => {
     const checkSet = vi.fn<CheckSet>(async () => {
       throw new Error("This file is larger than 200 MB.");
@@ -93,11 +149,11 @@ describe("Check a permit set screen", () => {
   });
 });
 
-async function fillAndUpload(container: HTMLElement) {
+async function fillAndUpload(container: HTMLElement, jurisdiction = "Town of Danville") {
   fireEvent.change(screen.getByLabelText("Project address"), {
     target: { value: "428 El Rio Rd, Danville, CA" },
   });
-  fireEvent.change(screen.getByLabelText("Jurisdiction"), { target: { value: "Town of Danville" } });
+  fireEvent.change(screen.getByLabelText("Jurisdiction"), { target: { value: jurisdiction } });
   fireEvent.change(screen.getByLabelText("ADU type"), { target: { value: "Attached ADU" } });
   const pdf = new File(["%PDF-1.7\n1 0 obj\n"], "428-el-rio-final.pdf", { type: "application/pdf" });
   fireEvent.change(fileInput(container), { target: { files: [pdf] } });
@@ -124,6 +180,22 @@ const FAKE_RESULT: EngineResult = {
       pages: [2],
       evidence: "CITY OF LAFAYETTE BUILDING DIVISION",
       suggested_fix: "Replace the Lafayette notes with the Town of Danville notes.",
+      citations: [
+        {
+          id: "CRC-R106.1.1",
+          label: "CRC Section R106.1.1",
+          title: "Information on construction documents",
+          source_url: "https://codes.iccsafe.org/content/CARC2025P2",
+          edition: "2025",
+        },
+        {
+          id: "DMC",
+          label: "Danville Municipal Code",
+          title: "Danville Municipal Code",
+          source_url: "https://codelibrary.amlegal.com/codes/danvilleca/latest/danville_ca/",
+          edition: "Danville amendment (2025 cycle)",
+        },
+      ],
     },
     {
       rule_id: "AR-001",
