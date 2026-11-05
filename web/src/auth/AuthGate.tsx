@@ -9,6 +9,7 @@ import {
 } from "firebase/auth";
 import { isAllowedEmail } from "../lib/access";
 import { allowedEmails, auth, authConfigured } from "./firebase";
+import { SignedInUser } from "./user";
 
 type GateState =
   | { kind: "loading" }
@@ -107,7 +108,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
             Sign out
           </button>
         </div>
-        {children}
+        <SignedInUser.Provider
+          value={{ uid: state.user.uid, email: state.user.email ?? "", name: state.user.displayName ?? "" }}
+        >
+          {children}
+        </SignedInUser.Provider>
       </>
     );
   }
