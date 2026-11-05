@@ -175,7 +175,9 @@ export function createHandler(options: AppOptions = {}) {
       res.writeHead(204).end();
       return;
     }
-    if (req.method === "GET" && url.pathname === "/healthz") {
+    // Cloud Run reserves some paths that end in "z" (such as /healthz) and
+    // answers them itself with a 404, so the deploy check uses /health.
+    if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/healthz")) {
       send(res, 200, { ok: true });
       return;
     }
