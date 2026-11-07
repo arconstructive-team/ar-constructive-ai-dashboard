@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createCallerAuth } from "../src/agent/auth";
 import { siteReportFrom } from "../src/chat/firestore";
 import { MemoryChatStore } from "../src/chat/store";
 import { runTool, TOOL_SPECS } from "../src/chat/tools";
@@ -796,5 +797,64 @@ describe("site report snapshot on the project (projects/{id}.siteReport)", () =>
     });
     expect(res.status).toBe(503);
     await new Promise<void>((resolve) => bare.close(() => resolve()));
+  });
+});
+
+// An Autopo agent asks for the site facts of an address, with no project, as a service account.
+describe("POST /api/site/report for an agent (address only)", () => {
+  let server: Server;
+  let base: string;
+  const AGENT = "agents@arconstructive.iam.gserviceaccount.com";
+  const agentToken = [{ alg: "RS256", kid: "k" }, { iss: "https://accounts.google.com", aud: "x", sub: "1", exp: 0 }, {}]
+    .map((part) => Buffer.from(JSON.stringify(part)).toString("base64url"))
+    .join(".");
+
+  beforeAll(async () => {
+    server = createApp({
+      site: {
+        apiKey: KEY,
+        fetch: fakeFetch({ parcelPointHit: true }).fetch,
+        now: NOW,
+        authorize: createCallerAuth({
+          verifyFirebase: async () => {
+            throw new Error("not a Firebase token");
+          },
+          allowedEmails: [],
+          serviceAccounts: [AGENT],
+          verifyGoogle: async (token) => {
+            if (token !== agentToken) throw new Error("bad");
+            return { iss: "https://accounts.google.com", aud: "x", sub: "1", exp: 0, email: AGENT, email_verified: true };
+          },
+        }),
+      },
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  const post = (headers: Record<string, string>) =>
+    fetch(`${base}/api/site/report`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ address: ADDRESS }),
+    });
+
+  it("refuses a call without a token", async () => {
+    expect((await post({})).status).toBe(401);
+  });
+
+  it("answers the site facts with their sources for an address alone", async () => {
+    const res = await post({ authorization: `Bearer ${agentToken}` });
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as SiteReport;
+    expect(report.address).toBe(ADDRESS);
+    for (const step of ["jurisdiction", "flood", "seismic", "parcel", "solar"] as const) {
+      expect(report.steps[step].sources.length, step).toBeGreaterThan(0);
+      expect(report.steps[step].sources[0]?.url, step).toMatch(/^https:\/\//);
+    }
+    expect(report.steps.parcel.data?.apn).toBe("200-030-023");
+    expect(report.steps.flood.status).toBe("ok");
+    expect(JSON.stringify(report)).not.toContain(KEY);
   });
 });
