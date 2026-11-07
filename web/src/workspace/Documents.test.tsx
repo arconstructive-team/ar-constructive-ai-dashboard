@@ -54,6 +54,65 @@ describe("reading a document's text", () => {
   });
 });
 
+describe("project page", () => {
+  it("adds a link and a file in the Documents section, lists them and changes a status", async () => {
+    const { store, view } = mount();
+    await createProject(view);
+    const projectId = [...store.projects.keys()][0]!;
+    const section = within(await view.findByRole("region", { name: "Documents" }));
+    expect(await section.findByText(/No documents yet/)).toBeTruthy();
+
+    fireEvent.click(section.getByRole("button", { name: "Add link" }));
+    const formElement = section.getByRole("form", { name: "Add a link" });
+    const form = within(formElement);
+    fireEvent.change(form.getByLabelText("Title"), { target: { value: "Survey on the shared drive" } });
+    fireEvent.change(form.getByLabelText("Link"), { target: { value: "not a link" } });
+    // Submit directly: the browser's own check of a URL field would stop a click first.
+    fireEvent.submit(formElement);
+    expect(await form.findByText(/starts with https/)).toBeTruthy();
+    fireEvent.change(form.getByLabelText("Link"), { target: { value: "https://drive.google.com/file/d/abc" } });
+    fireEvent.change(form.getByLabelText("Kind"), { target: { value: "survey" } });
+    fireEvent.click(form.getByRole("button", { name: "Add link" }));
+
+    const list = within(await section.findByRole("list", { name: "Documents of the project" }));
+    // The title shows once; the Open link repeats it for screen readers only.
+    expect(list.getByText("Survey on the shared drive", { selector: "span:not(.sr-only)" })).toBeTruthy();
+    expect(list.getByText(/Link to drive\.google\.com · Updated .* · Added by Ahk/)).toBeTruthy();
+    const open = list.getByRole("link", { name: "Open Survey on the shared drive" });
+    expect(open.getAttribute("href")).toBe("https://drive.google.com/file/d/abc");
+    expect(store.documents.get(projectId)?.[0]).toMatchObject({ source: "link", kind: "survey", status: "draft" });
+
+    fireEvent.change(section.getByLabelText("File to add to the project"), {
+      target: { files: [new File(["Expansive clay"], "soils-report.txt", { type: "text/plain" })] },
+    });
+    expect(await section.findByText("Added soils-report.txt")).toBeTruthy();
+    expect(await section.findByRole("button", { name: "Open soils-report.txt" })).toBeTruthy();
+
+    fireEvent.change(section.getByLabelText("Status of Survey on the shared drive"), { target: { value: "final" } });
+    await waitFor(() =>
+      expect(store.documents.get(projectId)?.find((d) => d.source === "link")).toMatchObject({ status: "final" }),
+    );
+  });
+
+  it("saves the project's status and client for the team", async () => {
+    const { store, view } = mount();
+    await createProject(view);
+    const projectId = [...store.projects.keys()][0]!;
+    const form = within(view.getByRole("form", { name: "Project status and client" }));
+    expect((form.getByLabelText("Status") as HTMLSelectElement).value).toBe("intake");
+
+    fireEvent.change(form.getByLabelText("Status"), { target: { value: "permit_set" } });
+    await waitFor(() => expect(store.projects.get(projectId)?.status).toBe("permit_set"));
+
+    const save = form.getByRole("button", { name: "Save client" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(form.getByLabelText("Client"), { target: { value: "  Rivera family " } });
+    fireEvent.click(save);
+    await waitFor(() => expect(store.projects.get(projectId)?.client).toBe("Rivera family"));
+    expect(await form.findByText("Saved for the team.")).toBeTruthy();
+  });
+});
+
 describe("Documents page", () => {
   it("uploads files, lists them with the assistant's artifacts, and opens an artifact in its chat", async () => {
     const { store, view, router } = mount();

@@ -1,13 +1,18 @@
 import type { PageText } from "../lib/engine";
-import type {
-  Chat,
-  Message,
-  NewDocument,
-  Project,
-  ProjectDocument,
-  StoredSet,
-  WorkspaceArtifact,
-  WorkspaceStore,
+import {
+  defaultDocumentKind,
+  isWebLink,
+  type Chat,
+  type DocumentPatch,
+  type Message,
+  type NewDocument,
+  type NewLink,
+  type Project,
+  type ProjectDocument,
+  type ProjectPatch,
+  type StoredSet,
+  type WorkspaceArtifact,
+  type WorkspaceStore,
 } from "./types";
 import type { SiteReport } from "../site/types";
 import { SITE_ARTIFACT_ID } from "../site/siteMarkdown";
@@ -72,7 +77,16 @@ export class MemoryStore implements WorkspaceStore {
 
   async createProject(input: Parameters<WorkspaceStore["createProject"]>[0], by: Parameters<WorkspaceStore["createProject"]>[1]) {
     const id = this.id("p");
-    this.projects.set(id, { id, ...input, createdBy: by.email, createdAt: this.now(), members: ["team"] });
+    this.projects.set(id, {
+      id,
+      ...input,
+      createdBy: by.email,
+      createdAt: this.now(),
+      members: ["team"],
+      client: "",
+      status: "intake",
+      siteReportAt: null,
+    });
     this.emit();
     return id;
   }
@@ -81,6 +95,16 @@ export class MemoryStore implements WorkspaceStore {
     const project = this.projects.get(projectId);
     if (!project) throw new Error("This project no longer exists.");
     this.projects.set(projectId, { ...project, name });
+    this.emit();
+  }
+
+  async updateProject(projectId: string, patch: ProjectPatch) {
+    const project = this.projects.get(projectId);
+    if (!project) throw new Error("This project no longer exists.");
+    const next = { ...project };
+    if (patch.client !== undefined) next.client = patch.client.trim();
+    if (patch.status !== undefined) next.status = patch.status;
+    this.projects.set(projectId, next);
     this.emit();
   }
 
@@ -222,15 +246,20 @@ export class MemoryStore implements WorkspaceStore {
 
   async addDocument(projectId: string, input: NewDocument) {
     const id = this.id("d");
+    const at = this.now();
     const d: ProjectDocument & { pages: PageText[]; file: Blob } = {
       id,
       name: input.name,
+      kind: defaultDocumentKind(input.contentType),
+      status: "final",
+      source: "upload",
       contentType: input.contentType,
       size: input.file.size,
       storagePath: `projects/${projectId}/documents/${id}/${input.name}`,
       pageCount: input.pages.length,
       uploadedBy: input.uploadedBy,
-      createdAt: this.now(),
+      createdAt: at,
+      updatedAt: at,
       pages: input.pages,
       file: input.file,
       ...(input.truncated ? { truncated: true } : {}),
@@ -241,7 +270,56 @@ export class MemoryStore implements WorkspaceStore {
     return id;
   }
 
+  async addLink(projectId: string, input: NewLink) {
+    const url = input.url.trim();
+    if (!isWebLink(url)) throw new Error("Enter a link that starts with https:// or http://.");
+    const id = this.id("d");
+    const at = this.now();
+    const d: ProjectDocument & { pages: PageText[]; file: Blob } = {
+      id,
+      name: input.name.trim() || url,
+      kind: input.kind,
+      status: input.status,
+      source: "link",
+      url,
+      contentType: "text/uri-list",
+      size: 0,
+      storagePath: "",
+      pageCount: 0,
+      uploadedBy: input.addedBy,
+      createdAt: at,
+      updatedAt: at,
+      pages: [],
+      file: new Blob([]),
+    };
+    this.documents.set(projectId, [d, ...(this.documents.get(projectId) ?? [])]);
+    this.emit();
+    return id;
+  }
+
+  async updateDocument(projectId: string, documentId: string, patch: DocumentPatch) {
+    const list = this.documents.get(projectId) ?? [];
+    if (!list.some((d) => d.id === documentId)) throw new Error("This document no longer exists.");
+    const at = this.now();
+    this.documents.set(
+      projectId,
+      list.map((d) =>
+        d.id === documentId
+          ? {
+              ...d,
+              ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+              ...(patch.kind ? { kind: patch.kind } : {}),
+              ...(patch.status ? { status: patch.status } : {}),
+              updatedAt: at,
+            }
+          : d,
+      ),
+    );
+    this.emit();
+  }
+
   async documentUrl(projectId: string, document: ProjectDocument) {
+    if (document.source === "link" && document.url) return document.url;
     return `memory://${projectId}/${document.id}/${encodeURIComponent(document.name)}`;
   }
 

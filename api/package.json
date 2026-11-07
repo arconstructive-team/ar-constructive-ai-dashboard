@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
+    "backfill:site": "tsx src/site/backfill-cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

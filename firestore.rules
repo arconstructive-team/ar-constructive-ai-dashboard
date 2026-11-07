@@ -2,6 +2,7 @@ rules_version = '2';
 
 // Only the signed-in team reads and writes the workspace. Everything else is denied.
 // Tests: web/rules/firestore.rules.test.ts (run in CI on the Firestore emulator).
+// The API (chat-api) writes with the Admin SDK, which these rules do not limit.
 service cloud.firestore {
   match /databases/{database}/documents {
     function isTeam() {
@@ -10,12 +11,58 @@ service cloud.firestore {
         && request.auth.token.email.lower() in ['ahk.archteam@gmail.com', 'rdghoorchian@gmail.com', 'mohsen.naghipourfar@gmail.com'];
     }
 
-    // projects/{projectId} and everything under it: chats, messages, sets, artifacts, versions.
-    match /projects/{projectId} {
-      allow read, write: if isTeam();
+    // The fields the team edits on the project page. Projects made before these fields existed
+    // have neither, so a missing field counts as its default.
+    function validProjectFields(data) {
+      return data.get('status', 'intake') in ['intake', 'design', 'permit_set', 'submitted', 'approved']
+        && data.get('client', '') is string
+        && data.get('client', '').size() <= 200;
+    }
 
-      match /{document=**} {
+    // A project document: an upload (its file in Storage) or a link to a file kept elsewhere.
+    // Uploads made before kind, status and source existed count as their defaults.
+    function validDocument(data) {
+      return data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 300
+        && data.get('kind', 'other') in ['drawings', 'survey', 'report', 'permit', 'correspondence', 'contract', 'photo', 'other']
+        && data.get('status', 'final') in ['draft', 'in_review', 'final', 'superseded']
+        && data.get('source', 'upload') in ['upload', 'link']
+        && (data.get('source', 'upload') != 'link'
+          || (data.get('url', '') is string && data.get('url', '').size() <= 2000 && data.get('url', '').matches('https?://.+')));
+    }
+
+    match /projects/{projectId} {
+      allow read, delete: if isTeam();
+      // siteReport (the site facts snapshot) is written only by the API, never by the browser.
+      allow create: if isTeam() && !('siteReport' in request.resource.data) && validProjectFields(request.resource.data);
+      allow update: if isTeam()
+        && request.resource.data.get('siteReport', null) == resource.data.get('siteReport', null)
+        && validProjectFields(request.resource.data);
+
+      // Chats with their messages and sets.
+      match /chats/{rest=**} {
         allow read, write: if isTeam();
+      }
+
+      // Artifacts with their versions.
+      match /artifacts/{rest=**} {
+        allow read, write: if isTeam();
+      }
+
+      // The full site report (projects/{id}/site/report).
+      match /site/{rest=**} {
+        allow read, write: if isTeam();
+      }
+
+      // Project documents: uploads and links. The source and the stored file never change.
+      match /documents/{documentId} {
+        allow read, delete: if isTeam();
+        allow create: if isTeam() && validDocument(request.resource.data);
+        allow update: if isTeam()
+          && validDocument(request.resource.data)
+          && request.resource.data.get('source', 'upload') == resource.data.get('source', 'upload')
+          && request.resource.data.get('storagePath', '') == resource.data.get('storagePath', '');
       }
     }
   }
