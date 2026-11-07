@@ -60,6 +60,14 @@ describe("Firestore rules: team members", () => {
     await assertSucceeds(getDoc(doc(teamUpperCase(), "projects/p1/chats/c1/messages/m1")));
   });
 
+  it("include the founder's account mohsen.naghipourfar@gmail.com", async () => {
+    const db = env.authenticatedContext("u-mn", { email: "mohsen.naghipourfar@gmail.com" }).firestore();
+    await assertSucceeds(getDocs(collection(db, "projects")));
+    await assertSucceeds(setDoc(doc(db, "projects/p4"), { name: "Founder project", createdBy: "mohsen.naghipourfar@gmail.com", members: ["team"] }));
+    await assertSucceeds(getDoc(doc(db, "projects/p1/chats/c1/messages/m1")));
+    await assertSucceeds(setDoc(doc(db, "projects/p1/chats/c1/messages/m4"), { role: "user", text: "hello from the founder" }));
+  });
+
   it("cannot reach anything outside projects", async () => {
     await assertFails(getDoc(doc(team(), "secrets/s1")));
     await assertFails(setDoc(doc(team(), "users/u-ahk"), { name: "Ahk" }));
