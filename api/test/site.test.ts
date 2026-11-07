@@ -14,6 +14,8 @@ import { googleImageUrl, imagePath, mapLinks, parseStreetViewMetadata, satellite
 import { COUNTY_ZONING, parseCountyZoning, parseJurisdiction } from "../src/site/jurisdiction";
 import { PARCEL_SOURCES, parcelAddressUrl, parcelSourceFor, parseParcel, streetName } from "../src/site/parcel";
 import { NO_KEY, buildSiteReport } from "../src/site/pipeline";
+import { MemorySiteProjectStore, backfillSiteReports } from "../src/site/projects";
+import { siteSnapshot } from "../src/site/snapshot";
 import { parseSolar } from "../src/site/solar";
 import { parseSection, sectionLines, sectionUrl } from "../src/site/terrain";
 import { STEP_NAMES, type SiteReport } from "../src/site/types";
@@ -670,5 +672,129 @@ describe("terrain sections", () => {
     expect(report.steps.elevation).toMatchObject({ status: "ok", data: { feet: 417.9 } });
     expect(report.steps.elevation.data?.sections).toBeUndefined();
     expect(report.steps.elevation.note).toBe("The terrain sections could not be read (The source answered with HTTP 500).");
+  });
+});
+
+describe("site report snapshot on the project (projects/{id}.siteReport)", () => {
+  it("keeps every fact with its sources and fetchedAt, without image paths", async () => {
+    const report = await buildSiteReport(ADDRESS, { apiKey: KEY, fetch: fakeFetch({ parcelPointHit: true }).fetch, now: NOW });
+    expect(report.steps.streetView.data?.images?.length ?? 0).toBeGreaterThan(0);
+    const snapshot = siteSnapshot(report);
+    expect(snapshot.fetchedAt).toBe(report.generatedAt);
+    expect(snapshot.address).toBe(ADDRESS);
+    expect(snapshot.facts.map((f) => f.key)).toEqual(STEP_NAMES);
+    const parcel = snapshot.facts.find((f) => f.key === "parcel")!;
+    expect(parcel).toMatchObject({ label: "Parcel", status: "ok", data: { apn: "200-030-023" } });
+    expect(parcel.summary).toBe(report.steps.parcel.summary);
+    for (const fact of snapshot.facts) {
+      expect(fact.sources).toEqual(report.steps[fact.key].sources);
+      for (const s of fact.sources) expect(typeof s.fetchedAt).toBe("string");
+    }
+    // Every source once, in the project's list of sources.
+    const all = STEP_NAMES.flatMap((k) => report.steps[k].sources.map((s) => `${s.name}\n${s.url}`));
+    expect(snapshot.sources.map((s) => `${s.name}\n${s.url}`)).toEqual([...new Set(all)]);
+    // Images stay live: no signed image path is stored.
+    const text = JSON.stringify(snapshot);
+    expect(text).not.toContain("/api/site/image");
+    expect(text).not.toContain(KEY);
+    expect(snapshot.facts.find((f) => f.key === "streetView")?.data).not.toHaveProperty("images");
+    expect(firestoreProblems(snapshot)).toEqual([]);
+  });
+
+  describe("routes", () => {
+    let server: Server;
+    let base: string;
+    const store = new MemorySiteProjectStore();
+
+    beforeAll(async () => {
+      server = createApp({
+        site: {
+          apiKey: KEY,
+          fetch: fakeFetch({ parcelPointHit: true }).fetch,
+          now: NOW,
+          projects: store,
+          authorize: async (header) => {
+            if (header !== "Bearer team-token") throw Object.assign(new Error("no"), { status: header ? 403 : 401 });
+          },
+        },
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+    afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+    const post = (path: string, body: unknown, token = "team-token") =>
+      fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+
+    it("saves the snapshot on a new project when its report is built", async () => {
+      store.projects.set("new-project", { address: ADDRESS });
+      const res = await post("/api/site/report", { address: ADDRESS, projectId: "new-project" });
+      expect(res.status).toBe(200);
+      const report = (await res.json()) as SiteReport;
+      const saved = store.projects.get("new-project")?.siteReport;
+      expect(saved).toEqual(siteSnapshot(report));
+      expect(saved?.fetchedAt).toBe(NOW().toISOString());
+    });
+
+    it("uses the project's own address when the request has none", async () => {
+      store.projects.set("p-address", { address: ADDRESS });
+      expect((await post("/api/site/report", { projectId: "p-address" })).status).toBe(200);
+      expect(store.projects.get("p-address")?.siteReport?.address).toBe(ADDRESS);
+    });
+
+    it("answers 404 for a deleted project and 400 for a bad project id", async () => {
+      expect((await post("/api/site/report", { address: ADDRESS, projectId: "gone" })).status).toBe(404);
+      expect((await post("/api/site/report", { address: ADDRESS, projectId: "../x" })).status).toBe(400);
+    });
+
+    it("asks for a team member before it saves or backfills", async () => {
+      expect((await post("/api/site/report", { address: ADDRESS, projectId: "new-project" }, "outsider")).status).toBe(403);
+      expect((await post("/api/site/backfill", {}, "outsider")).status).toBe(403);
+    });
+
+    it("backfills the projects that have no snapshot", async () => {
+      const stored = await buildSiteReport(ADDRESS, { fetch: fakeFetch().fetch, now: () => new Date("2026-11-01T10:00:00.000Z") });
+      store.projects.set("old-stored", { address: ADDRESS });
+      store.storedReports.set("old-stored", stored);
+      store.projects.set("old-bare", { address: ADDRESS });
+      store.projects.set("no-address", { address: "" });
+      const res = await post("/api/site/backfill", {});
+      expect(res.status).toBe(200);
+      const result = (await res.json()) as Awaited<ReturnType<typeof backfillSiteReports>>;
+      expect(result.fromStored).toEqual(["old-stored"]);
+      expect(result.built).toEqual(["old-bare"]);
+      expect(result.failed).toEqual([]);
+      expect(result.skipped.map((s) => s.id).sort()).toEqual(["new-project", "no-address", "p-address"]);
+      // The stored report is reused as is: no source is read again.
+      expect(store.projects.get("old-stored")?.siteReport?.fetchedAt).toBe("2026-11-01T10:00:00.000Z");
+      expect(store.projects.get("old-bare")?.siteReport?.fetchedAt).toBe(NOW().toISOString());
+    });
+  });
+
+  it("goes on after one project fails, and answers 503 without a project store", async () => {
+    const store = new MemorySiteProjectStore();
+    store.projects.set("a", { address: ADDRESS });
+    store.projects.set("b", { address: "1 Main St, Danville, CA 94526" });
+    const result = await backfillSiteReports(store, {
+      build: async (address) => {
+        if (address.startsWith("1 Main")) throw new Error("source down");
+        return buildSiteReport(address, { fetch: fakeFetch().fetch, now: NOW });
+      },
+    });
+    expect(result.built).toEqual(["a"]);
+    expect(result.failed).toEqual([{ id: "b", error: "source down" }]);
+
+    const bare = createApp({ site: { authorize: async () => {} } });
+    await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", resolve));
+    const res = await fetch(`http://127.0.0.1:${(bare.address() as AddressInfo).port}/api/site/report`, {
+      method: "POST",
+      body: JSON.stringify({ address: ADDRESS, projectId: "p1" }),
+    });
+    expect(res.status).toBe(503);
+    await new Promise<void>((resolve) => bare.close(() => resolve()));
   });
 });

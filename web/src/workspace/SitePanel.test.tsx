@@ -114,7 +114,9 @@ describe("Site section", () => {
     const view = mount(store, site);
     await createProject(view);
 
-    await waitFor(() => expect(buildReport).toHaveBeenCalledWith(ADDRESS));
+    // The project id goes along, so the server saves the site facts snapshot on the project.
+    const projectId = [...store.projects.keys()][0]!;
+    await waitFor(() => expect(buildReport).toHaveBeenCalledWith(ADDRESS, projectId));
     const section = within(await view.findByRole("region", { name: "Site" }));
     await section.findByRole("list", { name: "Open the site in Google" });
 
@@ -239,6 +241,12 @@ describe("site API client", () => {
       method: "POST",
       headers: { "content-type": "application/json", authorization: "Bearer id-token" },
       body: JSON.stringify({ address: ADDRESS }),
+    });
+    await api.buildReport(ADDRESS, "p1");
+    expect(fetch).toHaveBeenLastCalledWith("https://chat-api.example.test/api/site/report", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer id-token" },
+      body: JSON.stringify({ address: ADDRESS, projectId: "p1" }),
     });
     expect(api.imageUrl("/api/site/image?kind=satellite&sig=x")).toBe("https://chat-api.example.test/api/site/image?kind=satellite&sig=x");
   });

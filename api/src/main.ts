@@ -10,10 +10,12 @@ import { chatConfig } from "./chat/config";
 import { createFirestoreChatStore } from "./chat/firestore";
 import { anthropicModel } from "./chat/model";
 import { createApp } from "./server";
+import { createFirestoreSiteProjectStore } from "./site/projects";
 
 const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || "arconstructive";
 const app = initializeApp({ projectId });
 const auth = getAuth(app);
+const db = getFirestore(app);
 const config = chatConfig();
 const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
 const googleKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
@@ -32,12 +34,14 @@ createApp({
   allowedOrigin: process.env.ALLOWED_ORIGIN,
   chat: {
     config,
-    store: createFirestoreChatStore(getFirestore(app)),
+    store: createFirestoreChatStore(db),
     model: apiKey ? anthropicModel(apiKey) : null,
     verifyToken,
   },
   site: {
     apiKey: googleKey,
+    // The snapshot on projects/{id}.siteReport, written with the service's own identity.
+    projects: createFirestoreSiteProjectStore(db),
     authorize: (header) => authorize(header, verifyToken, config.allowedEmails),
   },
 }).listen(port, () => {

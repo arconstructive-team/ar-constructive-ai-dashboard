@@ -23,6 +23,7 @@ import { ASSISTANT_NAME, type Assistant, type ChatContext } from "./assistant";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { SitePanel, type SiteRun } from "./SitePanel";
 import { DocumentsPage } from "./DocumentsPage";
+import { ProjectDocuments } from "./ProjectDocuments";
 import { chatActivity, chatTimeLabel, chatTimeTitle, groupChatsByDate } from "./chatGroups";
 import type { SiteApi } from "../site/siteApi";
 import { siteArtifactTitle, siteReportMarkdown } from "../site/siteMarkdown";
@@ -31,6 +32,10 @@ import { hashRouter, routeHref, type Router, type WorkspaceRoute } from "./route
 import type { ArtifactSource } from "../artifacts/types";
 import {
   KIND_LABEL,
+  PROJECT_STATUSES,
+  PROJECT_STATUS_LABEL,
+  type ProjectPatch,
+  type ProjectStatus,
   type Author,
   type Chat,
   type Message,
@@ -181,7 +186,8 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
     if (!site || !address.trim()) return;
     setSiteRuns((runs) => ({ ...runs, [id]: { kind: "running" } }));
     try {
-      const report = await site.buildReport(address);
+      // With the project id the server also saves the site facts snapshot on the project.
+      const report = await site.buildReport(address, id);
       await store.saveSiteReport(id, report);
       // The same facts as an editable document in the project's Documents. A refresh adds a
       // version; the team's earlier edits stay in the version history.
@@ -318,6 +324,14 @@ export function Workspace({ store, assistant, user, canvas, site, router: inject
                   go({ projectId: null, chatId: null });
                   setPanel("projects");
                 }}
+                onSave={(patch) => store.updateProject(project.id, patch)}
+              />
+              <ProjectDocuments
+                store={store}
+                project={project}
+                by={authorName(user)}
+                onUpload={(file) => assistant.addDocument(project.id, file, authorName(user))}
+                onAll={() => openDocuments(project.id)}
               />
               <SitePanel
                 store={store}
@@ -366,11 +380,15 @@ function ProjectHeader(props: {
   onNewChat: () => void;
   onDocuments: () => void;
   onDelete: () => Promise<void>;
+  onSave: (patch: ProjectPatch) => Promise<void>;
 }) {
   const { project } = props;
   const [menu, setMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const facts = [project.jurisdiction || "Jurisdiction not set", project.aduType, `${CODE_CYCLE} California codes`];
+  const fields = (
+    <ProjectFields key={project.id} project={project} onSave={props.onSave} />
+  );
   return (
     <header className="grid">
       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
@@ -387,6 +405,7 @@ function ProjectHeader(props: {
               </li>
             ))}
           </ul>
+          {fields}
         </div>
         <div className="flex flex-wrap gap-2">
           <a
@@ -444,6 +463,92 @@ function ProjectHeader(props: {
       )}
 
     </header>
+  );
+}
+
+/**
+ * The project's status and client. A new status saves at once; the client saves with its button,
+ * so a half-typed name never reaches the team.
+ */
+function ProjectFields(props: { project: Project; onSave: (patch: ProjectPatch) => Promise<void> }) {
+  const { project } = props;
+  const id = useId();
+  const [client, setClient] = useState(project.client);
+  const [state, setState] = useState<{ kind: "idle" } | { kind: "saving" } | { kind: "saved" } | { kind: "error"; message: string }>({
+    kind: "idle",
+  });
+  // Another teammate's change shows here too, unless this person is typing a new client.
+  const [edited, setEdited] = useState(false);
+  useEffect(() => {
+    if (!edited) setClient(project.client);
+  }, [project.client, edited]);
+
+  async function save(patch: ProjectPatch) {
+    setState({ kind: "saving" });
+    try {
+      await props.onSave(patch);
+      setState({ kind: "saved" });
+      if (patch.client !== undefined) setEdited(false);
+    } catch (err) {
+      setState({ kind: "error", message: err instanceof Error && err.message ? err.message : "The change was not saved. Try again." });
+    }
+  }
+
+  const clientChanged = client.trim() !== project.client;
+  return (
+    <form
+      aria-label="Project status and client"
+      className="mt-2 grid gap-3 sm:grid-cols-[minmax(0,12rem)_minmax(0,20rem)_auto] sm:items-end"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (clientChanged) void save({ client: client.trim() });
+      }}
+    >
+      <label className="grid gap-1 text-sm font-medium" htmlFor={`${id}-status`}>
+        Status
+        <select
+          id={`${id}-status`}
+          className={inputBase}
+          value={project.status}
+          onChange={(e) => void save({ status: e.target.value as ProjectStatus })}
+        >
+          {PROJECT_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {PROJECT_STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="grid gap-1 text-sm font-medium" htmlFor={`${id}-client`}>
+        Client
+        <input
+          id={`${id}-client`}
+          className={inputBase}
+          value={client}
+          maxLength={200}
+          placeholder="Who the project is for"
+          onChange={(e) => {
+            setClient(e.target.value);
+            setEdited(true);
+          }}
+        />
+      </label>
+      <button type="submit" className={secondaryButton} disabled={!clientChanged || state.kind === "saving"}>
+        {state.kind === "saving" && <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" strokeWidth={1.5} />}
+        Save client
+      </button>
+      {state.kind === "error" && (
+        <p role="alert" className="flex items-start gap-2 text-sm text-danger sm:col-span-3">
+          <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.5} />
+          {state.message}
+        </p>
+      )}
+      {state.kind === "saved" && (
+        <p role="status" className="text-sm text-muted sm:col-span-3">
+          Saved for the team.
+        </p>
+      )}
+    </form>
   );
 }
 

@@ -29,6 +29,11 @@ import { SITE_ARTIFACT_ID } from "../site/siteMarkdown";
 import {
   ARTIFACT_KINDS,
   ARTIFACT_STATUSES,
+  DOCUMENT_KINDS,
+  DOCUMENT_STATUSES,
+  PROJECT_STATUSES,
+  defaultDocumentKind,
+  isWebLink,
   type Chat,
   type Message,
   type MessageSource,
@@ -62,6 +67,12 @@ export function projectFromData(id: string, data: DocumentData): Project {
     address: text(data.address),
     jurisdiction: (JURISDICTIONS as readonly string[]).includes(data.jurisdiction) ? (data.jurisdiction as Jurisdiction) : "",
     aduType: (ADU_TYPES as readonly string[]).includes(data.aduType) ? (data.aduType as AduType) : "No ADU",
+    client: text(data.client),
+    status: PROJECT_STATUSES.find((s) => s === data.status) ?? "intake",
+    siteReportAt:
+      typeof data.siteReport === "object" && data.siteReport !== null && typeof data.siteReport.fetchedAt === "string"
+        ? data.siteReport.fetchedAt
+        : null,
   };
 }
 
@@ -100,16 +111,25 @@ function sourcesFromData(value: unknown): MessageSource[] {
 }
 
 export function documentFromData(id: string, data: DocumentData): ProjectDocument {
+  const contentType = text(data.contentType, "application/octet-stream");
+  const createdAt = toDate(data.createdAt);
+  const isLink = data.source === "link" && typeof data.url === "string";
   const d: ProjectDocument = {
     id,
     name: text(data.name, "Untitled file"),
-    contentType: text(data.contentType, "application/octet-stream"),
+    // Files uploaded before kinds and statuses existed read as final, with a kind from their type.
+    kind: DOCUMENT_KINDS.find((k) => k === data.kind) ?? defaultDocumentKind(contentType),
+    status: DOCUMENT_STATUSES.find((s) => s === data.status) ?? "final",
+    source: isLink ? "link" : "upload",
+    contentType,
     size: count(data.size),
     storagePath: text(data.storagePath),
     pageCount: count(data.pageCount),
     uploadedBy: text(data.uploadedBy),
-    createdAt: toDate(data.createdAt),
+    createdAt,
+    updatedAt: toDate(data.updatedAt) ?? createdAt,
   };
+  if (isLink) d.url = data.url as string;
   if (data.truncated === true) d.truncated = true;
   if (typeof data.chatId === "string") d.chatId = data.chatId;
   return d;
@@ -186,12 +206,21 @@ export function createFirestoreStore(db: Firestore, storage?: FirebaseStorage | 
         createdBy: by.email,
         createdAt: serverTimestamp(),
         members: ["team"],
+        client: "",
+        status: "intake",
       });
       return ref.id;
     },
 
     async renameProject(projectId, name) {
       await updateDoc(projectDoc(projectId), { name });
+    },
+
+    async updateProject(projectId, patch) {
+      const data: DocumentData = {};
+      if (patch.client !== undefined) data.client = patch.client.trim();
+      if (patch.status !== undefined) data.status = patch.status;
+      if (Object.keys(data).length) await updateDoc(projectDoc(projectId), data);
     },
 
     watchChats(projectId, onData, onError) {
@@ -419,8 +448,12 @@ export function createFirestoreStore(db: Firestore, storage?: FirebaseStorage | 
         storagePath,
         pages: input.pages,
         pageCount: input.pages.length,
+        kind: defaultDocumentKind(input.contentType),
+        status: "final",
+        source: "upload",
         uploadedBy: input.uploadedBy,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       };
       if (input.truncated) data.truncated = true;
       if (input.chatId) data.chatId = input.chatId;
@@ -428,7 +461,38 @@ export function createFirestoreStore(db: Firestore, storage?: FirebaseStorage | 
       return ref.id;
     },
 
+    async addLink(projectId, input) {
+      const url = input.url.trim();
+      if (!isWebLink(url)) throw new Error("Enter a link that starts with https:// or http://.");
+      const ref = doc(collection(db, "projects", projectId, "documents"));
+      await setDoc(ref, {
+        name: input.name.trim() || url,
+        url,
+        kind: input.kind,
+        status: input.status,
+        source: "link",
+        contentType: "text/uri-list",
+        size: 0,
+        storagePath: "",
+        pages: [],
+        pageCount: 0,
+        uploadedBy: input.addedBy,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return ref.id;
+    },
+
+    async updateDocument(projectId, documentId, patch, by) {
+      const data: DocumentData = { updatedBy: by, updatedAt: serverTimestamp() };
+      if (patch.name !== undefined) data.name = patch.name.trim();
+      if (patch.kind !== undefined) data.kind = patch.kind;
+      if (patch.status !== undefined) data.status = patch.status;
+      await updateDoc(doc(db, "projects", projectId, "documents", documentId), data);
+    },
+
     async documentUrl(_projectId, document) {
+      if (document.source === "link" && document.url) return document.url;
       if (!storage) throw new Error("File storage is not set up for this dashboard.");
       return getDownloadURL(storageRef(storage, document.storagePath));
     },

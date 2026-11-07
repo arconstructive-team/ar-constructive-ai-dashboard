@@ -2,12 +2,15 @@
  * Projects, chat sessions, messages and artifacts, shared by the whole team.
  *
  * Firestore layout (the artifact canvas builds against the same names):
- * - projects/{projectId}: name, createdBy, createdAt, members, address, jurisdiction, aduType
+ * - projects/{projectId}: name, createdBy, createdAt, members, address, jurisdiction, aduType, client,
+ *   status, siteReport? (the site facts snapshot: facts, sources, fetchedAt; only the API writes it)
  * - projects/{projectId}/chats/{chatId}: title, createdBy, createdAt, updatedAt
  * - projects/{projectId}/chats/{chatId}/messages/{messageId}: role, text, author, createdAt, artifactId?
  * - projects/{projectId}/chats/{chatId}/sets/{setId}: fileName, pages, project, createdAt
- * - projects/{projectId}/documents/{documentId}: name, contentType, size, storagePath, pages, pageCount,
- *   truncated?, uploadedBy, createdAt, chatId? (the file itself in Storage at storagePath)
+ * - projects/{projectId}/documents/{documentId}: name (the title), kind, status, source ("upload" or
+ *   "link"), uploadedBy, createdAt, updatedAt, updatedBy?; an upload also has contentType, size,
+ *   storagePath, pages, pageCount, truncated?, chatId? (the file itself in Storage at storagePath);
+ *   a link has url
  * - projects/{projectId}/artifacts/{artifactId}: title, kind, status, content, version, chatId, updatedBy, updatedAt
  * - projects/{projectId}/artifacts/{artifactId}/versions/{version}: version, title, content, updatedBy, updatedAt, chatId
  * - projects/{projectId}/site/report: the site report (see site/types.ts); the chat assistant reads it too
@@ -37,6 +40,27 @@ export interface Project {
   address: string;
   jurisdiction: Jurisdiction | "";
   aduType: AduType;
+  /** The client the project is for; "" until the team fills it in. */
+  client: string;
+  status: ProjectStatus;
+  /** When the site facts snapshot on the project was read; null before the first one. */
+  siteReportAt: string | null;
+}
+
+export type ProjectStatus = "intake" | "design" | "permit_set" | "submitted" | "approved";
+export const PROJECT_STATUSES: ProjectStatus[] = ["intake", "design", "permit_set", "submitted", "approved"];
+export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
+  intake: "Intake",
+  design: "Design",
+  permit_set: "Permit set",
+  submitted: "Submitted",
+  approved: "Approved",
+};
+
+/** The fields the team edits on the project page. */
+export interface ProjectPatch {
+  client?: string;
+  status?: ProjectStatus;
 }
 
 export interface NewProject {
@@ -86,13 +110,57 @@ export interface NewMessage {
   sources?: MessageSource[];
 }
 
-/** A file in the project's documents: uploaded on the Documents page or with a chat's + button. */
+export type DocumentKind = "drawings" | "survey" | "report" | "permit" | "correspondence" | "contract" | "photo" | "other";
+export const DOCUMENT_KINDS: DocumentKind[] = ["drawings", "survey", "report", "permit", "correspondence", "contract", "photo", "other"];
+export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
+  drawings: "Drawings",
+  survey: "Survey",
+  report: "Report",
+  permit: "Permit or city",
+  correspondence: "Correspondence",
+  contract: "Contract",
+  photo: "Photo",
+  other: "Other",
+};
+
+/** The kind a new upload starts with, before the team picks another. */
+export const defaultDocumentKind = (contentType: string): DocumentKind => (contentType.startsWith("image/") ? "photo" : "other");
+
+/** A link the team may add: an http or https address. */
+export function isWebLink(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+export type DocumentStatus = "draft" | "in_review" | "final" | "superseded";
+export const DOCUMENT_STATUSES: DocumentStatus[] = ["draft", "in_review", "final", "superseded"];
+export const DOCUMENT_STATUS_LABEL: Record<DocumentStatus, string> = {
+  draft: "Draft",
+  in_review: "In review",
+  final: "Final",
+  superseded: "Superseded",
+};
+
+/**
+ * A project document: a file uploaded on the Documents page or with a chat's + button, or a link
+ * to a file kept elsewhere (a shared drive, the city's portal).
+ */
 export interface ProjectDocument {
   id: string;
+  /** The title the team sees; for an upload, the file name unless someone set another. */
   name: string;
+  kind: DocumentKind;
+  status: DocumentStatus;
+  source: "upload" | "link";
+  /** For a link: the address it opens. */
+  url?: string;
   contentType: string;
   size: number;
-  /** Where the file is in Firebase Storage. */
+  /** Where the file is in Firebase Storage; "" for a link. */
   storagePath: string;
   /** Pages (or parts) of text the assistant can read; 0 for scans, images and other files. */
   pageCount: number;
@@ -100,8 +168,24 @@ export interface ProjectDocument {
   truncated?: boolean;
   uploadedBy: string;
   createdAt: Date | null;
+  /** The last change: the upload, or a new title, kind or status. */
+  updatedAt: Date | null;
   /** The chat the file was uploaded in, when it came from a chat. */
   chatId?: string;
+}
+
+export interface NewLink {
+  name: string;
+  url: string;
+  kind: DocumentKind;
+  status: DocumentStatus;
+  addedBy: string;
+}
+
+export interface DocumentPatch {
+  name?: string;
+  kind?: DocumentKind;
+  status?: DocumentStatus;
 }
 
 export interface NewDocument {
@@ -183,6 +267,8 @@ export interface WorkspaceStore {
   watchProjects(onData: (projects: Project[]) => void, onError: OnError): Unsubscribe;
   createProject(input: NewProject, by: Author): Promise<string>;
   renameProject(projectId: string, name: string): Promise<void>;
+  /** Saves the client and status the team edits on the project page. */
+  updateProject(projectId: string, patch: ProjectPatch): Promise<void>;
 
   /**
    * Deletes the project for the whole team: its chats with their messages and sets, its artifacts
@@ -231,7 +317,11 @@ export interface WorkspaceStore {
   watchDocuments(projectId: string, onData: (documents: ProjectDocument[]) => void, onError: OnError): Unsubscribe;
   /** Stores the file and its text. Returns the document id. */
   addDocument(projectId: string, input: NewDocument): Promise<string>;
-  /** A link that opens or downloads the stored file. */
+  /** Adds a link to a file kept elsewhere. Returns the document id. */
+  addLink(projectId: string, input: NewLink): Promise<string>;
+  /** Changes a document's title, kind or status. */
+  updateDocument(projectId: string, documentId: string, patch: DocumentPatch, by: string): Promise<void>;
+  /** A link that opens or downloads the stored file, or the address of a link. */
   documentUrl(projectId: string, document: ProjectDocument): Promise<string>;
   /** Every artifact of the project, from all its chats, newest first. */
   watchProjectArtifacts(projectId: string, onData: (artifacts: WorkspaceArtifact[]) => void, onError: OnError): Unsubscribe;
