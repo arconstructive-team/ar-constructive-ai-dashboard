@@ -121,7 +121,6 @@ describe("Site section", () => {
     await section.findByRole("list", { name: "Open the site in Google" });
 
     // Saved on the project, where the chat assistant reads it.
-    const projectId = [...store.projects.keys()][0]!;
     expect(store.siteReports.get(projectId)?.steps.parcel.summary).toContain("200-030-023");
 
     // Up to four Street View images, live from the API with the Google attribution; two satellite images.
