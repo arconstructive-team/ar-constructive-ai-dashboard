@@ -75,7 +75,8 @@ describe("project page", () => {
     fireEvent.click(form.getByRole("button", { name: "Add link" }));
 
     const list = within(await section.findByRole("list", { name: "Documents of the project" }));
-    expect(list.getByText("Survey on the shared drive")).toBeTruthy();
+    // The title shows once; the Open link repeats it for screen readers only.
+    expect(list.getByText("Survey on the shared drive", { selector: "span:not(.sr-only)" })).toBeTruthy();
     expect(list.getByText(/Link to drive\.google\.com · Updated .* · Added by Ahk/)).toBeTruthy();
     const open = list.getByRole("link", { name: "Open Survey on the shared drive" });
     expect(open.getAttribute("href")).toBe("https://drive.google.com/file/d/abc");
