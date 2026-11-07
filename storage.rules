@@ -7,7 +7,7 @@ service firebase.storage {
     function isTeam() {
       return request.auth != null
         && request.auth.token.email is string
-        && request.auth.token.email.lower() in ['ahk.archteam@gmail.com', 'rdghoorchian@gmail.com'];
+        && request.auth.token.email.lower() in ['ahk.archteam@gmail.com', 'rdghoorchian@gmail.com', 'mohsen.naghipourfar@gmail.com'];
     }
 
     match /projects/{projectId}/documents/{documentId}/{fileName} {
