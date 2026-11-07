@@ -102,7 +102,25 @@ jobs:
           ENV_VARS="^;^ALLOWED_EMAILS=$ALLOWED_EMAILS;ALLOWED_ORIGIN=https://arconstructive.web.app,https://arconstructive.firebaseapp.com;GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
           # The model is a repository variable when set; else the code's default (a current Sonnet).
           if [ -n "$ANTHROPIC_MODEL" ]; then ENV_VARS="$ENV_VARS;ANTHROPIC_MODEL=$ANTHROPIC_MODEL"; fi
+          # Autopo agents: the service accounts that may call chat-api with a Google identity token
+          # (a repository variable when set; else the account Autopo uses), and the audiences such a
+          # token must name: this service's URLs.
+          AGENT_SERVICE_ACCOUNTS="${{ vars.AGENT_SERVICE_ACCOUNTS }}"
+          if [ -z "$AGENT_SERVICE_ACCOUNTS" ]; then AGENT_SERVICE_ACCOUNTS="autopo@$PROJECT_ID.iam.gserviceaccount.com"; fi
+          AGENT_AUDIENCES="https://chat-api-kfzvlbf5aq-wl.a.run.app"
+          CURRENT_URL=$(gcloud run services describe "$CHAT_SERVICE" --region "$REGION" --project "$PROJECT_ID" --format 'value(status.url)' 2>/dev/null || true)
+          if [ -n "$CURRENT_URL" ] && [ "$CURRENT_URL" != "$AGENT_AUDIENCES" ]; then AGENT_AUDIENCES="$AGENT_AUDIENCES,$CURRENT_URL"; fi
+          PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format 'value(projectNumber)' 2>/dev/null || true)
+          if [ -n "$PROJECT_NUMBER" ]; then AGENT_AUDIENCES="$AGENT_AUDIENCES,https://$CHAT_SERVICE-$PROJECT_NUMBER.$REGION.run.app"; fi
+          ENV_VARS="$ENV_VARS;AGENT_SERVICE_ACCOUNTS=$AGENT_SERVICE_ACCOUNTS;AGENT_AUDIENCES=$AGENT_AUDIENCES;STORAGE_BUCKET=$PROJECT_ID.firebasestorage.app"
           SECRETS="ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
+          # The agents' shared API key, for callers that cannot mint a Google identity token. Until
+          # the secret exists only identity tokens and team sign-ins work.
+          if gcloud secrets describe AGENT_API_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            SECRETS="$SECRETS,AGENT_API_KEY=AGENT_API_KEY:latest"
+          else
+            echo "::warning::Secret AGENT_API_KEY is missing: agents must call with a Google identity token."
+          fi
           # The site report's Google key (Geocoding, Street View Static, Maps Static, Solar). Until
           # the secret exists the site report uses the free public sources and shows the Google
           # steps as failed, so the deploy goes on without it and says so.

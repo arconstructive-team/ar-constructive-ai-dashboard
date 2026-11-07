@@ -31,6 +31,88 @@ The first screen, "Check a permit set":
 
 The single-set check stays at `#/check`, and the code library at `#/library`.
 
+## Calling chat-api from Autopo agents
+
+Autopo agents (and team scripts) call chat-api's engines server to server, without a browser sign-in.
+Base URL: `https://chat-api-kfzvlbf5aq-wl.a.run.app`. Every call below sends `Authorization: Bearer <token>`;
+a call without a token answers 401, and a valid token of an account that is not on a list answers 403.
+
+### Get a token
+
+chat-api accepts three kinds of token (`api/src/agent/auth.ts`):
+
+1. **A Google identity token of an allowlisted service account (preferred).** The token's audience must be
+   the service URL above, and it must carry the account's email. The allowlist is `AGENT_SERVICE_ACCOUNTS`
+   (repository variable; default `autopo@arconstructive.iam.gserviceaccount.com`). The deploy sets the
+   accepted audiences (`AGENT_AUDIENCES`) to the service's URLs. Ways to get one, valid for one hour:
+
+   ```sh
+   # As the service account (its key or workload identity is the active gcloud account):
+   TOKEN=$(gcloud auth print-identity-token --audiences=https://chat-api-kfzvlbf5aq-wl.a.run.app --include-email)
+   # As a person or another account allowed to impersonate it (roles/iam.serviceAccountTokenCreator):
+   TOKEN=$(gcloud auth print-identity-token --impersonate-service-account=autopo@arconstructive.iam.gserviceaccount.com \
+     --audiences=https://chat-api-kfzvlbf5aq-wl.a.run.app --include-email)
+   ```
+
+   With the IAM Credentials API: `POST https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/autopo@arconstructive.iam.gserviceaccount.com:generateIdToken`
+   with `{"audience": "https://chat-api-kfzvlbf5aq-wl.a.run.app", "includeEmail": true}`; the answer's `token` is the
+   token. On Cloud Run or GCE: the metadata server's `identity?audience=<service URL>&format=full`.
+2. **The agents' API key.** The value of the Secret Manager secret `AGENT_API_KEY` in the `arconstructive` project
+   (the deploy binds it when it exists). Send it as the bearer token. Use it only where a Google identity token
+   cannot be minted.
+3. **A team member's Firebase ID token**, as the web app sends it (the email must be on the team list).
+
+### Site report by address
+
+```sh
+curl -X POST https://chat-api-kfzvlbf5aq-wl.a.run.app/api/site/report \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"address": "428 El Rio Rd, Danville, CA 94526"}'
+```
+
+No `projectId` is needed. The answer is the full site report: `steps.jurisdiction`, `flood`, `seismic`
+(liquefaction and fault zones), `parcel`, `solar` (roof), `zoning`, `fire`, `elevation`, `climateZone`, `geocode`,
+`streetView` and `satellite`. Each step has `status`, `data`, `summary` and `sources` (name, exact URL, `fetchedAt`).
+Add `"projectId": "…"` to also save the snapshot on that web app project.
+
+### Permit-set check
+
+```sh
+curl -X POST https://chat-api-kfzvlbf5aq-wl.a.run.app/api/check \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"pdf": "gs://arconstructive.firebasestorage.app/projects/P/documents/D/set.pdf",
+       "jurisdiction": "Town of Danville", "aduType": "Attached ADU", "address": "428 El Rio Rd, Danville, CA 94526"}'
+```
+
+`pdf` is a `gs://bucket/path`, a project document's `storagePath` (read from the web app's bucket), or a public
+`https://` URL. The PDF must be under 200 MB. The answer has `report` (the engine result: pages, findings with code
+citations, missing items, counts), `issueReport` (`title`, `markdown`) and `regenerated` (`title`, `markdown` of the
+regenerated sheets, or null). Errors: 400 bad body or source, 404 no file, 413 too large, 415 not a PDF, 422
+unreadable PDF. The web app's raw PDF upload (`content-type: application/pdf`) still works as before.
+
+### Sheet regeneration
+
+```sh
+curl -X POST https://chat-api-kfzvlbf5aq-wl.a.run.app/api/regenerate \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"pdf": "https://example.com/set.pdf", "jurisdiction": "Town of Danville", "aduType": "Attached ADU"}'
+```
+
+The same body as the check. The answer has `regenerated` (sheets A-0.1, A-0.2, A-5.2 and A-5.3 with their
+sections and citations, `to_confirm`, and the findings still on them), `markdown`, and `pdf.base64` (the sheets as
+one PDF). It answers 422 when the set has no architectural cover sheet.
+
+### Export every project
+
+```sh
+curl https://chat-api-kfzvlbf5aq-wl.a.run.app/api/export -H "authorization: Bearer $TOKEN"
+```
+
+The answer is `{exportedAt, count, projects}`. Each project has `id`, `name`, `address`, `jurisdiction`, `aduType`,
+`client`, `status`, `createdAt`, `members`, `siteReport` (the facts snapshot with sources, or null), `documents`
+(`title`, `kind`, `status`, `source`, `link` (the URL, or `gs://bucket/storagePath`), `storagePath`, `updatedAt`)
+and `artifacts` (issue reports, sheet sets and the site report document, with their markdown). It reads only.
+
 ## Team workspace (projects, chats, artifacts)
 
 The home page (`#/`) is the team workspace. Both team accounts see every project and chat.

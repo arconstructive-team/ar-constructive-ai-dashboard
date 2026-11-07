@@ -6,6 +6,7 @@ import type { ChatConfig } from "./chat/config";
 import type { ModelClient } from "./chat/model";
 import type { ChatStore } from "./chat/store";
 import { createSiteHandler, type SiteOptions } from "./site/handler";
+import { createAgentHandler, type AgentOptions } from "./agent/handler";
 
 /** The largest permit set the API accepts: 200 MB. */
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -46,6 +47,11 @@ export interface AppOptions {
   chat?: ChatOptions;
   /** The site report routes (/api/site/*). Without them they answer 503. */
   site?: SiteOptions;
+  /**
+   * The routes for callers outside the web app (Autopo agents): the check and the sheet
+   * regeneration on a PDF named by path or URL, and the export. Without it they answer 503.
+   */
+  agent?: AgentOptions;
 }
 
 /** The largest chat request body: it only names the project and the chat. */
@@ -164,6 +170,7 @@ export function createHandler(options: AppOptions = {}) {
   const max = options.maxBytes ?? MAX_UPLOAD_BYTES;
   const extract = options.extract ?? (async (data: Uint8Array) => (await import("./extract")).extractPages(data));
   const site = createSiteHandler(options.site ?? {});
+  const agent = createAgentHandler(options.agent, { extract, maxBytes: max });
   return async (req: IncomingMessage, res: ServerResponse) => {
     const origin = corsOrigin(options.allowedOrigin, req.headers.origin);
     if (origin) res.setHeader("access-control-allow-origin", origin);
@@ -186,6 +193,7 @@ export function createHandler(options: AppOptions = {}) {
       return;
     }
     if (url.pathname.startsWith("/api/site/") && (await site(req, res, url))) return;
+    if (await agent(req, res, url)) return;
     if (url.pathname !== "/api/check") {
       send(res, 404, { error: "Not found." });
       return;
